@@ -55,7 +55,7 @@
 %}
 %%
 
-program : tBEGIN stmts tEND { compiler->ast(new p6::program_node(LINE, $2)); }
+program : tBEGIN stmts tEND { compiler->ast(new p6::program_node(LINE, new p6::block_node(LINE, new cdk::sequence_node(LINE), $2))); }
         ;
 
 stmts : stmt       { $$ = new cdk::sequence_node(LINE, $1); }
@@ -63,8 +63,8 @@ stmts : stmt       { $$ = new cdk::sequence_node(LINE, $1); }
       ;
 
 stmt : expr ';'                         { $$ = new p6::evaluation_node(LINE, $1); }
-     | tPRINT expr ';'                  { $$ = new p6::print_node(LINE, $2); }
-     | tREAD lval ';'                   { $$ = new p6::read_node(LINE, $2); }
+     | tPRINT expr ';'                  { $$ = new p6::write_node(LINE, new cdk::sequence_node(LINE, $2), true); }
+     | tREAD lval ';'                   { $$ = new p6::evaluation_node(LINE, new cdk::assignment_node(LINE, $2, new p6::input_node(LINE))); }
      | tWHILE '(' expr ')' stmt         { $$ = new p6::while_node(LINE, $3, $5); }
      | tIF '(' expr ')' stmt %prec tIFX { $$ = new p6::if_node(LINE, $3, $5); }
      | tIF '(' expr ')' stmt tELSE stmt { $$ = new p6::if_else_node(LINE, $3, $5, $7); }

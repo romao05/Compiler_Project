@@ -1,25 +1,25 @@
 #pragma once
 
 #include <cdk/ast/basic_node.h>
+#include "ast/block_node.h"
 
 namespace p6 {
 
   /**
-   * Class for describing program nodes.
+   * Class for describing program nodes (begin <decls> <stmts> end).
    */
   class program_node : public cdk::basic_node {
-    cdk::basic_node *_statements;
+    p6::block_node *_block;
 
   public:
-    program_node(int lineno, cdk::basic_node *statements) :
-        cdk::basic_node(lineno), _statements(statements) {
+    program_node(int lineno, p6::block_node *block) :
+        cdk::basic_node(lineno), _block(block) {
     }
 
-    cdk::basic_node *statements() { return _statements; }
+    p6::block_node *block() { return _block; }
 
     void accept(basic_ast_visitor *sp, int level) { sp->do_program_node(this, level); }
 
   };
 
 } // p6
-
