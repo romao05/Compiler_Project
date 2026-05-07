@@ -191,7 +191,7 @@ void p6::postfix_writer::do_program_node(p6::program_node * const node, int lvl)
   _pf.LABEL("_main");
   _pf.ENTER(0);  // Simple doesn't implement local variables
 
-  node->statements()->accept(this, lvl);
+  node->block()->accept(this, lvl);
 
   // end the main function
   _pf.INT(0);
@@ -221,30 +221,85 @@ void p6::postfix_writer::do_evaluation_node(p6::evaluation_node * const node, in
   }
 }
 
-void p6::postfix_writer::do_print_node(p6::print_node * const node, int lvl) {
+void p6::postfix_writer::do_write_node(p6::write_node * const node, int lvl) {
   ASSERT_SAFE_EXPRESSIONS;
-  node->argument()->accept(this, lvl); // determine the value to print
-  if (node->argument()->is_typed(cdk::TYPE_INT)) {
-    _pf.CALL("printi");
-    _pf.TRASH(4); // delete the printed value
-  } else if (node->argument()->is_typed(cdk::TYPE_STRING)) {
-    _pf.CALL("prints");
-    _pf.TRASH(4); // delete the printed value's address
-  } else {
-    std::cerr << "ERROR: CANNOT HAPPEN!" << std::endl;
-    exit(1);
+  for (size_t i = 0; i < node->arguments()->size(); i++) {
+    auto arg = dynamic_cast<cdk::expression_node *>(node->arguments()->node(i));
+    arg->accept(this, lvl);
+    if (arg->is_typed(cdk::TYPE_INT)) {
+      _pf.CALL("printi");
+      _pf.TRASH(4);
+    } else if (arg->is_typed(cdk::TYPE_STRING)) {
+      _pf.CALL("prints");
+      _pf.TRASH(4);
+    } else {
+      std::cerr << "ERROR: CANNOT HAPPEN!" << std::endl;
+      exit(1);
+    }
   }
-  _pf.CALL("println"); // print a newline
+  if (node->newline()) _pf.CALL("println");
 }
 
 //---------------------------------------------------------------------------
 
-void p6::postfix_writer::do_read_node(p6::read_node * const node, int lvl) {
+void p6::postfix_writer::do_input_node(p6::input_node * const node, int lvl) {
   ASSERT_SAFE_EXPRESSIONS;
   _pf.CALL("readi");
   _pf.LDFVAL32I();
-  node->argument()->accept(this, lvl);
-  _pf.STINT();
+}
+
+//---------------------------------------------------------------------------
+
+void p6::postfix_writer::do_block_node(p6::block_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_function_definition_node(p6::function_definition_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_function_declaration_node(p6::function_declaration_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_function_call_node(p6::function_call_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_null_node(p6::null_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_sizeof_node(p6::sizeof_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_address_of_node(p6::address_of_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_index_node(p6::index_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_stack_alloc_node(p6::stack_alloc_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_return_node(p6::return_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_stop_node(p6::stop_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::postfix_writer::do_next_node(p6::next_node * const node, int lvl) {
+  // EMPTY
 }
 
 //---------------------------------------------------------------------------

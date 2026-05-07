@@ -153,7 +153,7 @@ void p6::xml_writer::do_assignment_node(cdk::assignment_node * const node, int l
 
 void p6::xml_writer::do_program_node(p6::program_node * const node, int lvl) {
   openTag(node, lvl);
-  node->statements()->accept(this, lvl + 4);
+  node->block()->accept(this, lvl + 4);
   closeTag(node, lvl);
 }
 
@@ -166,20 +166,73 @@ void p6::xml_writer::do_evaluation_node(p6::evaluation_node * const node, int lv
   closeTag(node, lvl);
 }
 
-void p6::xml_writer::do_print_node(p6::print_node * const node, int lvl) {
+void p6::xml_writer::do_write_node(p6::write_node * const node, int lvl) {
   ASSERT_SAFE_EXPRESSIONS;
   openTag(node, lvl);
-  node->argument()->accept(this, lvl + 2);
+  node->arguments()->accept(this, lvl + 2);
   closeTag(node, lvl);
 }
 
 //---------------------------------------------------------------------------
 
-void p6::xml_writer::do_read_node(p6::read_node * const node, int lvl) {
+void p6::xml_writer::do_input_node(p6::input_node * const node, int lvl) {
   ASSERT_SAFE_EXPRESSIONS;
   openTag(node, lvl);
-  node->argument()->accept(this, lvl + 2);
   closeTag(node, lvl);
+}
+
+//---------------------------------------------------------------------------
+
+void p6::xml_writer::do_block_node(p6::block_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_variable_declaration_node(p6::variable_declaration_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_function_definition_node(p6::function_definition_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_function_declaration_node(p6::function_declaration_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_function_call_node(p6::function_call_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_null_node(p6::null_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_sizeof_node(p6::sizeof_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_address_of_node(p6::address_of_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_index_node(p6::index_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_stack_alloc_node(p6::stack_alloc_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_return_node(p6::return_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_stop_node(p6::stop_node * const node, int lvl) {
+  // EMPTY
+}
+
+void p6::xml_writer::do_next_node(p6::next_node * const node, int lvl) {
+  // EMPTY
 }
 
 //---------------------------------------------------------------------------
