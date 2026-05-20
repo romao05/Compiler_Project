@@ -5,6 +5,8 @@
 #include <cstring>
 #include <cdk/compiler.h>
 #include <cdk/types/types.h>
+#include <cdk/types/balanced3_type.h>
+#include <cdk/types/takum3_type.h>
 #include ".auto/all_nodes.h"
 #define LINE                         compiler->scanner()->lineno()
 #define yylex()                      compiler->scanner()->scan()
@@ -24,7 +26,9 @@
   std::shared_ptr<cdk::basic_type> type;        /* expression type */
   //-- don't change *any* of these --- END!
 
-  int                   i;          /* integer value */
+  int                   i;          /* integer value (legacy; not emitted by P6 scanner) */
+  cdk::balanced3_type::value_type *b; /* P6 integer literal (balanced ternary) */
+  cdk::takum3_type::value_type    *t; /* P6 real literal (Takum3) */
   std::string          *s;          /* symbol name or string literal */
   cdk::basic_node      *node;       /* node pointer */
   cdk::sequence_node   *sequence;
@@ -32,9 +36,16 @@
   cdk::lvalue_node     *lvalue;
 };
 
-%token <i> tINTEGER
+%token <b> tINTEGER
+%token <t> tREAL
 %token <s> tIDENTIFIER tSTRING
 %token tWHILE tIF tPRINT tREAD tBEGIN tEND
+/* Tokens devolvidos pelo scanner P6 -- regras Bison na Etapa 2 */
+%token tELIF tSTOP tNEXT tRETURN
+%token tINPUT tNULL tSIZEOF
+%token tTYPE_INT tTYPE_REAL tTYPE_STRING tTYPE_VOID
+%token tEXTERN tFORWARD tPUBLIC tAUTO
+%token tAND tOR tARROW tPRINTLN
 
 %nonassoc tIFX
 %nonassoc tELSE
@@ -71,7 +82,7 @@ stmt : expr ';'                         { $$ = new p6::evaluation_node(LINE, $1)
      | '{' stmts '}'                    { $$ = $2; }
      ;
 
-expr : tINTEGER              { $$ = new cdk::integer_node(LINE, $1); }
+expr : tINTEGER              { $$ = new cdk::balanced3_node(LINE, *$1); delete $1; }
      | tSTRING               { $$ = new cdk::string_node(LINE, $1); }
      | '-' expr %prec tUNARY { $$ = new cdk::unary_minus_node(LINE, $2); }
      | '+' expr %prec tUNARY { $$ = new cdk::unary_plus_node(LINE, $2); }
