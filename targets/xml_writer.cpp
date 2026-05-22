@@ -6,31 +6,33 @@
 //---------------------------------------------------------------------------
 
 void p6::xml_writer::do_nil_node(cdk::nil_node * const node, int lvl) {
-  // EMPTY
+  openTag(node, lvl);
+  closeTag(node, lvl);
 }
 void p6::xml_writer::do_data_node(cdk::data_node * const node, int lvl) {
-  // EMPTY
+  openTag(node, lvl);
+  closeTag(node, lvl);
 }
 void p6::xml_writer::do_double_node(cdk::double_node * const node, int lvl) {
-  // EMPTY
+  process_literal(node, lvl);
 }
 void p6::xml_writer::do_balanced3_node(cdk::balanced3_node * const node, int lvl) {
-  // EMPTY
+  os() << std::string(lvl, ' ') << '<' << node->label() << '>' << node->value().to_string() << "</" << node->label() << '>' << std::endl;
 }
 void p6::xml_writer::do_posit3_node(cdk::posit3_node * const node, int lvl) {
-  // EMPTY
+  os() << std::string(lvl, ' ') << '<' << node->label() << '>' << node->value().to_string() << "</" << node->label() << '>' << std::endl;
 }
 void p6::xml_writer::do_takum3_node(cdk::takum3_node * const node, int lvl) {
-  // EMPTY
+  os() << std::string(lvl, ' ') << '<' << node->label() << '>' << node->value().to_string() << "</" << node->label() << '>' << std::endl;
 }
 void p6::xml_writer::do_not_node(cdk::not_node * const node, int lvl) {
-  // EMPTY
+  do_unary_operation(node, lvl);
 }
 void p6::xml_writer::do_and_node(cdk::and_node * const node, int lvl) {
-  // EMPTY
+  do_binary_operation(node, lvl);
 }
 void p6::xml_writer::do_or_node(cdk::or_node * const node, int lvl) {
-  // EMPTY
+  do_binary_operation(node, lvl);
 }
 
 //---------------------------------------------------------------------------
@@ -184,55 +186,118 @@ void p6::xml_writer::do_input_node(p6::input_node * const node, int lvl) {
 //---------------------------------------------------------------------------
 
 void p6::xml_writer::do_block_node(p6::block_node * const node, int lvl) {
-  // EMPTY
+  openTag(node, lvl);
+  openTag("declarations", lvl + 2);
+  if (node->declarations()) node->declarations()->accept(this, lvl + 4);
+  closeTag("declarations", lvl + 2);
+  openTag("instructions", lvl + 2);
+  if (node->instructions()) node->instructions()->accept(this, lvl + 4);
+  closeTag("instructions", lvl + 2);
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_variable_declaration_node(p6::variable_declaration_node * const node, int lvl) {
-  // EMPTY
+  os() << std::string(lvl, ' ') << "<" << node->label()
+       << " qualifier='" << node->qualifier()
+       << "' identifier='" << node->identifier() << "'>" << std::endl;
+  if (node->initializer()) {
+    openTag("initializer", lvl + 2);
+    node->initializer()->accept(this, lvl + 4);
+    closeTag("initializer", lvl + 2);
+  }
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_function_definition_node(p6::function_definition_node * const node, int lvl) {
-  // EMPTY
+  os() << std::string(lvl, ' ') << "<" << node->label()
+       << " qualifier='" << node->qualifier()
+       << "' identifier='" << node->identifier() << "'>" << std::endl;
+  openTag("arguments", lvl + 2);
+  if (node->arguments()) node->arguments()->accept(this, lvl + 4);
+  closeTag("arguments", lvl + 2);
+  openTag("block", lvl + 2);
+  if (node->block()) node->block()->accept(this, lvl + 4);
+  closeTag("block", lvl + 2);
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_function_declaration_node(p6::function_declaration_node * const node, int lvl) {
-  // EMPTY
+  os() << std::string(lvl, ' ') << "<" << node->label()
+       << " qualifier='" << node->qualifier()
+       << "' identifier='" << node->identifier() << "'>" << std::endl;
+  openTag("arguments", lvl + 2);
+  if (node->arguments()) node->arguments()->accept(this, lvl + 4);
+  closeTag("arguments", lvl + 2);
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_function_call_node(p6::function_call_node * const node, int lvl) {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  os() << std::string(lvl, ' ') << "<" << node->label()
+       << " identifier='" << node->identifier() << "'>" << std::endl;
+  openTag("arguments", lvl + 2);
+  if (node->arguments()) node->arguments()->accept(this, lvl + 4);
+  closeTag("arguments", lvl + 2);
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_null_node(p6::null_node * const node, int lvl) {
-  // EMPTY
+  openTag(node, lvl);
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_sizeof_node(p6::sizeof_node * const node, int lvl) {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  openTag(node, lvl);
+  openTag("expression", lvl + 2);
+  node->expression()->accept(this, lvl + 4);
+  closeTag("expression", lvl + 2);
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_address_of_node(p6::address_of_node * const node, int lvl) {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  openTag(node, lvl);
+  openTag("lvalue", lvl + 2);
+  node->lvalue()->accept(this, lvl + 4);
+  closeTag("lvalue", lvl + 2);
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_index_node(p6::index_node * const node, int lvl) {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  openTag(node, lvl);
+  openTag("base", lvl + 2);
+  node->base()->accept(this, lvl + 4);
+  closeTag("base", lvl + 2);
+  openTag("index", lvl + 2);
+  node->index()->accept(this, lvl + 4);
+  closeTag("index", lvl + 2);
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_stack_alloc_node(p6::stack_alloc_node * const node, int lvl) {
-  // EMPTY
+  do_unary_operation(node, lvl);
 }
 
 void p6::xml_writer::do_return_node(p6::return_node * const node, int lvl) {
-  // EMPTY
+  openTag(node, lvl);
+  if (node->expression()) {
+    openTag("expression", lvl + 2);
+    node->expression()->accept(this, lvl + 4);
+    closeTag("expression", lvl + 2);
+  }
+  closeTag(node, lvl);
 }
 
 void p6::xml_writer::do_stop_node(p6::stop_node * const node, int lvl) {
-  // EMPTY
+  os() << std::string(lvl, ' ') << "<" << node->label()
+       << " level='" << node->level() << "'/>" << std::endl;
 }
 
 void p6::xml_writer::do_next_node(p6::next_node * const node, int lvl) {
-  // EMPTY
+  os() << std::string(lvl, ' ') << "<" << node->label()
+       << " level='" << node->level() << "'/>" << std::endl;
 }
 
 //---------------------------------------------------------------------------

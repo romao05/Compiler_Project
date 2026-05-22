@@ -1,7 +1,6 @@
 %option c++ prefix="p6_scanner_" outfile="p6_scanner.cpp"
 %option stack noyywrap yylineno 8bit debug
 %{
-#include <climits>
 #include <stdexcept>
 #include <string>
 #include <cdk/ast/sequence_node.h>
@@ -13,6 +12,27 @@
 
 // don't change this
 #define yyerror LexerError
+
+// P6 integers are 40-trit balanced ternary: the representable range
+// is +/- (3^40 - 1)/2.  Literals beyond it are a lexical error.
+static const long long BALANCED3_MAX = 6078832729528464400LL;
+
+// Parse a non-negative base-10 or base-9 integer literal; sets `overflow`
+// (and returns 0) if the value does not fit the 40-trit range.
+static long long p6_scan_int(const char *text, int base, bool &overflow) {
+  long long v = 0;
+  overflow = false;
+  try {
+    v = std::stoll(text, nullptr, base);
+  } catch (const std::out_of_range &) {
+    overflow = true;
+  }
+  if (overflow || v > BALANCED3_MAX) {
+    overflow = true;
+    return 0;
+  }
+  return v;
+}
 %}
 
 %x X_STRING X_STRING_DONE X_STRING_SKIP X_COMMENT
@@ -89,44 +109,36 @@
    *   - base 9         : "0" followed by digits 0..8
    *   - decimal        : non-zero leading digit (or the lone "0")
    * "09" (and similar) is rejected as an invalid literal.
+   * Values beyond the 40-trit range are a lexical error.
    * --------------------------------------------------------- */
 
 "0t"[-0+]+                      {
                                   long long v = 0;
-                                  bool overflow = false;
-                                  for (const char *p = yytext + 2; *p; ++p) {
-                                    int digit = (*p == '+') ? 1 : (*p == '-') ? -1 : 0;
-                                    if (v > LLONG_MAX / 3 || v < LLONG_MIN / 3) {
-                                      overflow = true; break;
-                                    }
-                                    v = v * 3 + digit;
+                                  if (yyleng - 2 > 40) {
+                                    yyerror("overflow in base-3 integer literal");
+                                  } else {
+                                    for (const char *p = yytext + 2; *p; ++p)
+                                      v = v * 3 + ((*p == '+') ? 1 : (*p == '-') ? -1 : 0);
                                   }
-                                  if (overflow) yyerror("overflow in base-3 integer literal");
                                   yylval.b = new cdk::balanced3_type::value_type(v);
                                   return tINTEGER;
                                 }
 
 0[0-8]+                         {
-                                  try {
-                                    long long v = std::stoll(yytext, nullptr, 9);
-                                    yylval.b = new cdk::balanced3_type::value_type(v);
-                                  } catch (const std::out_of_range &) {
-                                    yyerror("overflow in base-9 integer literal");
-                                    yylval.b = new cdk::balanced3_type::value_type((long long) 0);
-                                  }
+                                  bool overflow = false;
+                                  long long v = p6_scan_int(yytext, 9, overflow);
+                                  if (overflow) yyerror("overflow in base-9 integer literal");
+                                  yylval.b = new cdk::balanced3_type::value_type(v);
                                   return tINTEGER;
                                 }
 
 0[0-9]+                         yyerror("invalid integer literal (leading zero)");
 
 [1-9][0-9]*                     {
-                                  try {
-                                    long long v = std::stoll(yytext, nullptr, 10);
-                                    yylval.b = new cdk::balanced3_type::value_type(v);
-                                  } catch (const std::out_of_range &) {
-                                    yyerror("overflow in decimal integer literal");
-                                    yylval.b = new cdk::balanced3_type::value_type((long long) 0);
-                                  }
+                                  bool overflow = false;
+                                  long long v = p6_scan_int(yytext, 10, overflow);
+                                  if (overflow) yyerror("overflow in decimal integer literal");
+                                  yylval.b = new cdk::balanced3_type::value_type(v);
                                   return tINTEGER;
                                 }
 
@@ -135,16 +147,6 @@
                                   return tINTEGER;
                                 }
 
-  /*
-   * String literals (delimited by ").
-   *   - named escapes: \t \n \r \" \\
-   *   - octal escapes: \ddd (1..3 digits); value 0 truncates the
-   *     string at that point (rest of the literal is consumed but
-   *     discarded up to the closing quote -- C-string semantics)
-   *   - adjacent string literals (only whitespace between) concatenate
-   *     into a single tSTRING token
-   *   - newline and raw NUL inside the literal are lexical errors
-   */
 
 \"                              { yylval.s = new std::string(""); BEGIN(X_STRING); }
 
