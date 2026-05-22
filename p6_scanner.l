@@ -189,6 +189,8 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
 <X_STRING_SKIP><<EOF>>          yyerror("unterminated string literal");
 
 <X_STRING_DONE>[ \t\r\n]+       ; /* whitespace between adjacent literals */
+<X_STRING_DONE>"/*"             yy_push_state(X_COMMENT); /* comments are separators too */
+<X_STRING_DONE>"//".*           ; /* explanatory comment between adjacent literals */
 <X_STRING_DONE>\"               BEGIN(X_STRING);
 <X_STRING_DONE><<EOF>>          BEGIN(INITIAL); return tSTRING;
 <X_STRING_DONE>.                yyless(0); BEGIN(INITIAL); return tSTRING;
