@@ -91,9 +91,9 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
 [A-Za-z][A-Za-z0-9]*            { yylval.s = new std::string(yytext); return tIDENTIFIER; }
 
   /*
-   * Real literals (Takum3) -- written in C-style, base 10.
-   *   d+ . d*  [exp]?   |   . d+ [exp]?   |   d+ exp
-   * exp = [eE] [-+]? d+
+    Real literals (Takum3) -- written in C-style, base 10.
+    d+ . d*  [exp]?   |   . d+ [exp]?   |   d+ exp
+    exp = [eE] [-+]? d+
    */
 
 [0-9]+"."[0-9]*([eE][-+]?[0-9]+)?    |
@@ -104,13 +104,13 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
                                      }
 
   /* ---------------------------------------------------------
-   * Integer literals (three bases; stored as balanced ternary).
-   *   - base 3 balanced: "0t" followed by -, 0, +
-   *   - base 9         : "0" followed by digits 0..8
-   *   - decimal        : non-zero leading digit (or the lone "0")
-   * "09" (and similar) is rejected as an invalid literal.
-   * Values beyond the 40-trit range are a lexical error.
-   * --------------------------------------------------------- */
+   Integer literals (three bases; stored as balanced ternary).
+    - base 3 balanced: "0t" followed by -, 0, +
+    - base 9         : "0" followed by digits 0..8
+    - decimal        : non-zero leading digit (or the lone "0")
+   "09" (and similar) is rejected as an invalid literal.
+   Values beyond the 40-trit range are a lexical error.
+   --------------------------------------------------------- */
 
 "0t"[-0+]+                      {
                                   long long v = 0;
@@ -147,6 +147,16 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
                                   return tINTEGER;
                                 }
 
+  /*
+   String literals (delimited by ").
+     - named escapes: \t \n \r \" \\
+     - octal escapes: \ddd (1..3 digits); value 0 truncates the
+       string at that point (rest of the literal is consumed but
+       discarded up to the closing quote -- C-string semantics)
+     - adjacent string literals (only whitespace between) concatenate
+       into a single tSTRING token
+     - newline and raw NUL inside the literal are lexical errors
+  */
 
 \"                              { yylval.s = new std::string(""); BEGIN(X_STRING); }
 

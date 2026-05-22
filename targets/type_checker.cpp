@@ -230,6 +230,7 @@ void p6::type_checker::do_stack_alloc_node(p6::stack_alloc_node *const node, int
   node->type(pointer_type(void_type()));
 }
 
+//---------------------------------------------------------------------------
 void p6::type_checker::do_sizeof_node(p6::sizeof_node *const node, int lvl) {
   ASSERT_UNSPEC;
   node->expression()->accept(this, lvl + 2);
