@@ -147,16 +147,6 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
                                   return tINTEGER;
                                 }
 
-  /*
-   * String literals (delimited by ").
-   *   - named escapes: \t \n \r \" \\
-   *   - octal escapes: \ddd (1..3 digits); value 0 truncates the
-   *     string at that point (rest of the literal is consumed but
-   *     discarded up to the closing quote -- C-string semantics)
-   *   - adjacent string literals (only whitespace between) concatenate
-   *     into a single tSTRING token
-   *   - newline and raw NUL inside the literal are lexical errors
-   */
 
 \"                              { yylval.s = new std::string(""); BEGIN(X_STRING); }
 
