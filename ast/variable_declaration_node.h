@@ -8,6 +8,19 @@
 namespace p6 {
 
   /**
+   * Storage-class qualifiers applicable to P6 declarations (variables and
+   * functions).  `private` is the default and has no keyword in the language,
+   * so it is NOT a lexical token; the others map to the keywords
+   * public / forward / extern (see the reference manual, "Símbolos globais").
+   */
+  enum qualifier {
+    QUALIFIER_PRIVATE = 0,  //!< default: visible only inside its own module
+    QUALIFIER_PUBLIC,       //!< public:  exported to other modules
+    QUALIFIER_FORWARD,      //!< forward: defined in another module
+    QUALIFIER_EXTERN        //!< extern:  non-P6 (e.g. C) function symbol
+  };
+
+  /**
    * Class for describing variable declarations.
    * Supports qualifiers public/forward/extern (and "auto" inferred type).
    */

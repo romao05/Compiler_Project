@@ -1,7 +1,27 @@
 #include <string>
+#include <memory>
 #include "targets/xml_writer.h"
 #include "targets/type_checker.h"
 #include ".auto/all_nodes.h"  // automatically generated
+
+//---------------------------------------------------------------------------
+// The xml_writer prints the syntax tree built by Bison as an XML document.
+// Expression-bearing nodes run ASSERT_SAFE_EXPRESSIONS first, the canonical
+// CDK guard that type-checks the subtree before it is written.
+//---------------------------------------------------------------------------
+
+static std::string qualifier_name(int qualifier) {
+  switch (qualifier) {
+    case p6::QUALIFIER_PUBLIC:  return "public";
+    case p6::QUALIFIER_FORWARD: return "forward";
+    case p6::QUALIFIER_EXTERN:  return "extern";
+    default:                    return "private";
+  }
+}
+
+static std::string type_name(std::shared_ptr<cdk::basic_type> type) {
+  return type == nullptr ? "auto" : type->to_string();
+}
 
 //---------------------------------------------------------------------------
 
@@ -25,6 +45,7 @@ void p6::xml_writer::do_posit3_node(cdk::posit3_node * const node, int lvl) {
 void p6::xml_writer::do_takum3_node(cdk::takum3_node * const node, int lvl) {
   os() << std::string(lvl, ' ') << '<' << node->label() << '>' << node->value().to_string() << "</" << node->label() << '>' << std::endl;
 }
+
 void p6::xml_writer::do_not_node(cdk::not_node * const node, int lvl) {
   do_unary_operation(node, lvl);
 }
@@ -126,7 +147,8 @@ void p6::xml_writer::do_eq_node(cdk::eq_node * const node, int lvl) {
 
 void p6::xml_writer::do_variable_node(cdk::variable_node * const node, int lvl) {
   ASSERT_SAFE_EXPRESSIONS;
-  os() << std::string(lvl, ' ') << "<" << node->label() << ">" << node->name() << "</" << node->label() << ">" << std::endl;
+  os() << std::string(lvl, ' ') << '<' << node->label() << '>' << node->name()
+       << "</" << node->label() << '>' << std::endl;
 }
 
 void p6::xml_writer::do_rvalue_node(cdk::rvalue_node * const node, int lvl) {
@@ -143,7 +165,6 @@ void p6::xml_writer::do_assignment_node(cdk::assignment_node * const node, int l
   openTag("lvalue", lvl);
   node->lvalue()->accept(this, lvl + 2);
   closeTag("lvalue", lvl);
-  reset_new_symbol();
 
   openTag("rvalue", lvl);
   node->rvalue()->accept(this, lvl + 2);
@@ -159,6 +180,17 @@ void p6::xml_writer::do_program_node(p6::program_node * const node, int lvl) {
   closeTag(node, lvl);
 }
 
+void p6::xml_writer::do_block_node(p6::block_node * const node, int lvl) {
+  openTag(node, lvl);
+  openTag("declarations", lvl + 2);
+  if (node->declarations()) node->declarations()->accept(this, lvl + 4);
+  closeTag("declarations", lvl + 2);
+  openTag("instructions", lvl + 2);
+  if (node->instructions()) node->instructions()->accept(this, lvl + 4);
+  closeTag("instructions", lvl + 2);
+  closeTag(node, lvl);
+}
+
 //---------------------------------------------------------------------------
 
 void p6::xml_writer::do_evaluation_node(p6::evaluation_node * const node, int lvl) {
@@ -170,7 +202,8 @@ void p6::xml_writer::do_evaluation_node(p6::evaluation_node * const node, int lv
 
 void p6::xml_writer::do_write_node(p6::write_node * const node, int lvl) {
   ASSERT_SAFE_EXPRESSIONS;
-  openTag(node, lvl);
+  os() << std::string(lvl, ' ') << '<' << node->label()
+       << " newline='" << node->newline() << "'>" << std::endl;
   node->arguments()->accept(this, lvl + 2);
   closeTag(node, lvl);
 }
@@ -179,6 +212,11 @@ void p6::xml_writer::do_write_node(p6::write_node * const node, int lvl) {
 
 void p6::xml_writer::do_input_node(p6::input_node * const node, int lvl) {
   ASSERT_SAFE_EXPRESSIONS;
+  openTag(node, lvl);
+  closeTag(node, lvl);
+}
+
+void p6::xml_writer::do_null_node(p6::null_node * const node, int lvl) {
   openTag(node, lvl);
   closeTag(node, lvl);
 }
@@ -208,32 +246,33 @@ void p6::xml_writer::do_variable_declaration_node(p6::variable_declaration_node 
   closeTag(node, lvl);
 }
 
+void p6::xml_writer::do_function_declaration_node(p6::function_declaration_node * const node, int lvl) {
+  os() << std::string(lvl, ' ') << '<' << node->label()
+       << " qualifier='" << qualifier_name(node->qualifier()) << '\''
+       << " identifier='" << node->identifier() << '\''
+       << " type='" << type_name(node->type()) << "'>" << std::endl;
+  openTag("arguments", lvl + 2);
+  if (node->arguments()) node->arguments()->accept(this, lvl + 4);
+  closeTag("arguments", lvl + 2);
+  closeTag(node, lvl);
+}
+
 void p6::xml_writer::do_function_definition_node(p6::function_definition_node * const node, int lvl) {
-  os() << std::string(lvl, ' ') << "<" << node->label()
-       << " qualifier='" << node->qualifier()
-       << "' identifier='" << node->identifier() << "'>" << std::endl;
+  os() << std::string(lvl, ' ') << '<' << node->label()
+       << " qualifier='" << qualifier_name(node->qualifier()) << '\''
+       << " identifier='" << node->identifier() << '\''
+       << " type='" << type_name(node->type()) << "'>" << std::endl;
   openTag("arguments", lvl + 2);
   if (node->arguments()) node->arguments()->accept(this, lvl + 4);
   closeTag("arguments", lvl + 2);
   openTag("block", lvl + 2);
-  if (node->block()) node->block()->accept(this, lvl + 4);
+  node->block()->accept(this, lvl + 4);
   closeTag("block", lvl + 2);
   closeTag(node, lvl);
 }
 
-void p6::xml_writer::do_function_declaration_node(p6::function_declaration_node * const node, int lvl) {
-  os() << std::string(lvl, ' ') << "<" << node->label()
-       << " qualifier='" << node->qualifier()
-       << "' identifier='" << node->identifier() << "'>" << std::endl;
-  openTag("arguments", lvl + 2);
-  if (node->arguments()) node->arguments()->accept(this, lvl + 4);
-  closeTag("arguments", lvl + 2);
-  closeTag(node, lvl);
-}
-
 void p6::xml_writer::do_function_call_node(p6::function_call_node * const node, int lvl) {
-  ASSERT_SAFE_EXPRESSIONS;
-  os() << std::string(lvl, ' ') << "<" << node->label()
+  os() << std::string(lvl, ' ') << '<' << node->label()
        << " identifier='" << node->identifier() << "'>" << std::endl;
   openTag("arguments", lvl + 2);
   if (node->arguments()) node->arguments()->accept(this, lvl + 4);
@@ -279,6 +318,8 @@ void p6::xml_writer::do_index_node(p6::index_node * const node, int lvl) {
 void p6::xml_writer::do_stack_alloc_node(p6::stack_alloc_node * const node, int lvl) {
   do_unary_operation(node, lvl);
 }
+
+//---------------------------------------------------------------------------
 
 void p6::xml_writer::do_return_node(p6::return_node * const node, int lvl) {
   openTag(node, lvl);

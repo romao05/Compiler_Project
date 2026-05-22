@@ -13,6 +13,16 @@
 #define yylex()                      compiler->scanner()->scan()
 #define yyerror(compiler, s)         compiler->scanner()->error(s)
 //-- don't change *any* of these --- END!
+
+// Build a declaration node: a function declaration when the declared type is
+// functional (a forward/extern function name), a variable declaration otherwise.
+static cdk::basic_node *p6_declaration(int lineno, int qualifier,
+                                       std::shared_ptr<cdk::basic_type> type,
+                                       const std::string &id) {
+  if (cdk::functional_type::cast(type))
+    return new p6::function_declaration_node(lineno, qualifier, type, id, new cdk::sequence_node(lineno));
+  return new p6::variable_declaration_node(lineno, qualifier, type, id, nullptr);
+}
 %}
 
 %parse-param {std::shared_ptr<cdk::compiler> compiler}
@@ -46,7 +56,7 @@
 %token tIF tELIF tELSE tWHILE tSTOP tNEXT tRETURN
 %token tINPUT tNULL tSIZEOF
 %token tTYPE_INT tTYPE_REAL tTYPE_STRING tTYPE_VOID
-%token tEXTERN tFORWARD tPUBLIC tPRIVATE tAUTO
+%token tEXTERN tFORWARD tPUBLIC tAUTO
 %token tARROW tPRINTLN
 
 %nonassoc tIFX
@@ -62,9 +72,9 @@
 %nonassoc '~'
 %nonassoc tUNARY
 
-%type <node> declaracao programa instr elifs variavel
-%type <sequence> decls variaveis instrs exprs
-%type <i> qualif optqualif
+%type <node> declaracao vardecl programa instr elifs variavel
+%type <sequence> decls vardecls variaveis instrs exprs
+%type <i> qualif
 %type <type> tipo
 %type <types> tipos
 %type <block> bloco
@@ -84,41 +94,39 @@ decls :                  { $$ = new cdk::sequence_node(LINE); }
       | decls declaracao { $$ = new cdk::sequence_node(LINE, $2, $1); }
       ;
 
-programa : tBEGIN decls instrs tEND { $$ = new p6::program_node(LINE, new p6::block_node(LINE, $2, $3)); }
+programa : tBEGIN vardecls instrs tEND { $$ = new p6::program_node(LINE, new p6::block_node(LINE, $2, $3)); }
          ;
 
-qualif : tPUBLIC   { $$ = tPUBLIC; }
-       | tFORWARD  { $$ = tFORWARD; }
-       | tEXTERN   { $$ = tEXTERN; }
+qualif : tPUBLIC   { $$ = p6::QUALIFIER_PUBLIC; }
+       | tFORWARD  { $$ = p6::QUALIFIER_FORWARD; }
+       | tEXTERN   { $$ = p6::QUALIFIER_EXTERN; }
        ;
 
-optqualif :         { $$ = tPRIVATE; }
-          | qualif  { $$ = $1; }
-          ;
+vardecl : tipo tIDENTIFIER ';'           { $$ = p6_declaration(LINE, p6::QUALIFIER_PRIVATE, $1, *$2); delete $2; }
+        | tipo tIDENTIFIER '=' expr ';'  { $$ = new p6::variable_declaration_node(LINE, p6::QUALIFIER_PRIVATE, $1, *$2, $4); delete $2; }
+        | tAUTO tIDENTIFIER '=' expr ';' { $$ = new p6::variable_declaration_node(LINE, p6::QUALIFIER_PRIVATE, nullptr, *$2, $4); delete $2; }
+        ;
 
-declaracao : optqualif tipo tIDENTIFIER ';'
-               { if (cdk::functional_type::cast($2))
-                   $$ = new p6::function_declaration_node(LINE, $1, $2, *$3, new cdk::sequence_node(LINE));
-                 else
-                   $$ = new p6::variable_declaration_node(LINE, $1, $2, *$3, nullptr);
-                 delete $3; }
-           | optqualif tipo tIDENTIFIER '=' expr ';'
-               { $$ = new p6::variable_declaration_node(LINE, $1, $2, *$3, $5); delete $3; }
-           | optqualif tAUTO tIDENTIFIER '=' expr ';'
-               { $$ = new p6::variable_declaration_node(LINE, $1, nullptr, *$3, $5); delete $3; }
-           | qualif tIDENTIFIER '=' expr ';'
-               { $$ = new p6::variable_declaration_node(LINE, $1, nullptr, *$2, $4); delete $2; }
-           | optqualif tIDENTIFIER '(' ')' tARROW tipo bloco
-               { $$ = new p6::function_definition_node(LINE, $1, $6, *$2, new cdk::sequence_node(LINE), $7); delete $2; }
-           | optqualif tIDENTIFIER '(' variaveis ')' tARROW tipo bloco
-               { $$ = new p6::function_definition_node(LINE, $1, $7, *$2, $4, $8); delete $2; }
+vardecls :                  { $$ = new cdk::sequence_node(LINE); }
+         | vardecls vardecl { $$ = new cdk::sequence_node(LINE, $2, $1); }
+         ;
+
+declaracao : vardecl                                         { $$ = $1; }
+           | qualif tipo tIDENTIFIER ';'                     { $$ = p6_declaration(LINE, $1, $2, *$3); delete $3; }
+           | qualif tipo tIDENTIFIER '=' expr ';'            { $$ = new p6::variable_declaration_node(LINE, $1, $2, *$3, $5); delete $3; }
+           | qualif tAUTO tIDENTIFIER '=' expr ';'           { $$ = new p6::variable_declaration_node(LINE, $1, nullptr, *$3, $5); delete $3; }
+           | qualif tIDENTIFIER '=' expr ';'                 { $$ = new p6::variable_declaration_node(LINE, $1, nullptr, *$2, $4); delete $2; }
+           | tIDENTIFIER '(' ')' tARROW tipo bloco           { $$ = new p6::function_definition_node(LINE, p6::QUALIFIER_PRIVATE, $5, *$1, new cdk::sequence_node(LINE), $6); delete $1; }
+           | qualif tIDENTIFIER '(' ')' tARROW tipo bloco    { $$ = new p6::function_definition_node(LINE, $1, $6, *$2, new cdk::sequence_node(LINE), $7); delete $2; }
+           | tIDENTIFIER '(' variaveis ')' tARROW tipo bloco { $$ = new p6::function_definition_node(LINE, p6::QUALIFIER_PRIVATE, $6, *$1, $3, $7); delete $1; }
+           | qualif tIDENTIFIER '(' variaveis ')' tARROW tipo bloco { $$ = new p6::function_definition_node(LINE, $1, $7, *$2, $4, $8); delete $2; }
            ;
 
 variaveis : variavel               { $$ = new cdk::sequence_node(LINE, $1); }
           | variaveis ',' variavel { $$ = new cdk::sequence_node(LINE, $3, $1); }
           ;
 
-variavel : tipo tIDENTIFIER { $$ = new p6::variable_declaration_node(LINE, tPRIVATE, $1, *$2, nullptr); delete $2; }
+variavel : tipo tIDENTIFIER { $$ = new p6::variable_declaration_node(LINE, p6::QUALIFIER_PRIVATE, $1, *$2, nullptr); delete $2; }
          ;
 
 tipo : tTYPE_INT          { $$ = cdk::balanced3_type::create(); }
@@ -159,7 +167,7 @@ elifs : tELIF '(' expr ')' instr %prec tIFX   { $$ = new p6::if_node(LINE, $3, $
       | tELIF '(' expr ')' instr elifs        { $$ = new p6::if_else_node(LINE, $3, $5, $6); }
       ;
 
-bloco : '{' decls instrs '}'  { $$ = new p6::block_node(LINE, $2, $3); }
+bloco : '{' vardecls instrs '}'  { $$ = new p6::block_node(LINE, $2, $3); }
       ;
 
 exprs : expr            { $$ = new cdk::sequence_node(LINE, $1); }
