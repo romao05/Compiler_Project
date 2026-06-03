@@ -27,6 +27,9 @@ docker-compose.override.yml
 .env
 *.sh
 
+# Relatório final (entrega)
+RELATORIO-ENTREGA-FINAL.md
+
 # Editor/IDE
 .vscode/
 .idea/
