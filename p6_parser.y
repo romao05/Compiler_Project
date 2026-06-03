@@ -75,8 +75,9 @@ static cdk::basic_node *p6_declaration(int lineno, int qualifier,
 %type <node> declaracao vardecl programa instr elifs variavel
 %type <sequence> decls vardecls variaveis instrs exprs
 %type <i> qualif
-%type <type> tipo
-%type <types> tipos
+%type <s> string
+%type <type> data_type void_type ptr_type func_type ret_type
+%type <types> arg_types
 %type <block> bloco
 %type <expression> expr
 %type <lvalue> lval
@@ -102,8 +103,8 @@ qualif : tPUBLIC   { $$ = p6::QUALIFIER_PUBLIC; }
        | tEXTERN   { $$ = p6::QUALIFIER_EXTERN; }
        ;
 
-vardecl : tipo tIDENTIFIER ';'           { $$ = p6_declaration(LINE, p6::QUALIFIER_PRIVATE, $1, *$2); delete $2; }
-        | tipo tIDENTIFIER '=' expr ';'  { $$ = new p6::variable_declaration_node(LINE, p6::QUALIFIER_PRIVATE, $1, *$2, $4); delete $2; }
+vardecl : data_type tIDENTIFIER ';'           { $$ = p6_declaration(LINE, p6::QUALIFIER_PRIVATE, $1, *$2); delete $2; }
+        | data_type tIDENTIFIER '=' expr ';'  { $$ = new p6::variable_declaration_node(LINE, p6::QUALIFIER_PRIVATE, $1, *$2, $4); delete $2; }
         | tAUTO tIDENTIFIER '=' expr ';' { $$ = new p6::variable_declaration_node(LINE, p6::QUALIFIER_PRIVATE, nullptr, *$2, $4); delete $2; }
         ;
 
@@ -112,35 +113,53 @@ vardecls :                  { $$ = new cdk::sequence_node(LINE); }
          ;
 
 declaracao : vardecl                                         { $$ = $1; }
-           | qualif tipo tIDENTIFIER ';'                     { $$ = p6_declaration(LINE, $1, $2, *$3); delete $3; }
-           | qualif tipo tIDENTIFIER '=' expr ';'            { $$ = new p6::variable_declaration_node(LINE, $1, $2, *$3, $5); delete $3; }
+           | qualif data_type tIDENTIFIER ';'                     { $$ = p6_declaration(LINE, $1, $2, *$3); delete $3; }
+           | qualif data_type tIDENTIFIER '=' expr ';'            { $$ = new p6::variable_declaration_node(LINE, $1, $2, *$3, $5); delete $3; }
            | qualif tAUTO tIDENTIFIER '=' expr ';'           { $$ = new p6::variable_declaration_node(LINE, $1, nullptr, *$3, $5); delete $3; }
            | qualif tIDENTIFIER '=' expr ';'                 { $$ = new p6::variable_declaration_node(LINE, $1, nullptr, *$2, $4); delete $2; }
-           | tIDENTIFIER '(' ')' tARROW tipo bloco           { $$ = new p6::function_definition_node(LINE, p6::QUALIFIER_PRIVATE, $5, *$1, new cdk::sequence_node(LINE), $6); delete $1; }
-           | qualif tIDENTIFIER '(' ')' tARROW tipo bloco    { $$ = new p6::function_definition_node(LINE, $1, $6, *$2, new cdk::sequence_node(LINE), $7); delete $2; }
-           | tIDENTIFIER '(' variaveis ')' tARROW tipo bloco { $$ = new p6::function_definition_node(LINE, p6::QUALIFIER_PRIVATE, $6, *$1, $3, $7); delete $1; }
-           | qualif tIDENTIFIER '(' variaveis ')' tARROW tipo bloco { $$ = new p6::function_definition_node(LINE, $1, $7, *$2, $4, $8); delete $2; }
+           | tIDENTIFIER '(' ')' tARROW ret_type bloco           { $$ = new p6::function_definition_node(LINE, p6::QUALIFIER_PRIVATE, $5, *$1, new cdk::sequence_node(LINE), $6); delete $1; }
+           | qualif tIDENTIFIER '(' ')' tARROW ret_type bloco    { $$ = new p6::function_definition_node(LINE, $1, $6, *$2, new cdk::sequence_node(LINE), $7); delete $2; }
+           | tIDENTIFIER '(' variaveis ')' tARROW ret_type bloco { $$ = new p6::function_definition_node(LINE, p6::QUALIFIER_PRIVATE, $6, *$1, $3, $7); delete $1; }
+           | qualif tIDENTIFIER '(' variaveis ')' tARROW ret_type bloco { $$ = new p6::function_definition_node(LINE, $1, $7, *$2, $4, $8); delete $2; }
            ;
 
 variaveis : variavel               { $$ = new cdk::sequence_node(LINE, $1); }
           | variaveis ',' variavel { $$ = new cdk::sequence_node(LINE, $3, $1); }
           ;
 
-variavel : tipo tIDENTIFIER { $$ = new p6::variable_declaration_node(LINE, p6::QUALIFIER_PRIVATE, $1, *$2, nullptr); delete $2; }
+variavel : data_type tIDENTIFIER { $$ = new p6::variable_declaration_node(LINE, p6::QUALIFIER_PRIVATE, $1, *$2, nullptr); delete $2; }
          ;
 
-tipo : tTYPE_INT          { $$ = cdk::balanced3_type::create(); }
-     | tTYPE_REAL         { $$ = cdk::takum3_type::create(); }
-     | tTYPE_STRING       { $$ = cdk::primitive_type::create(4, cdk::TYPE_STRING); }
-     | tTYPE_VOID         { $$ = cdk::primitive_type::create(0, cdk::TYPE_VOID); }
-     | '[' tipo ']'       { $$ = cdk::reference_type::create(4, $2); }
-     | tipo '<' '>'       { $$ = cdk::functional_type::create($1); }
-     | tipo '<' tipos '>' { $$ = cdk::functional_type::create(*$3, $1); delete $3; }
-     ;
+  /* Types usable for variables, parameters and functional-type arguments:
+     these never derive raw void. void is only legal as a function return
+     type (ret_type) or as a pointer base ([ void ], [ [ void ] ], ...). */
+data_type : tTYPE_INT    { $$ = cdk::balanced3_type::create(); }
+          | tTYPE_REAL   { $$ = cdk::takum3_type::create(); }
+          | tTYPE_STRING { $$ = cdk::primitive_type::create(4, cdk::TYPE_STRING); }
+          | ptr_type     { $$ = $1; }
+          | func_type    { $$ = $1; }
+          ;
 
-tipos : tipo           { $$ = new std::vector<std::shared_ptr<cdk::basic_type>>(); $$->push_back($1); }
-      | tipos ',' tipo { $$ = $1; $1->push_back($3); }
-      ;
+void_type : tTYPE_VOID   { $$ = cdk::primitive_type::create(0, cdk::TYPE_VOID); }
+          ;
+
+  /* Pointer types. The pointed-to type may be void: [ void ], [ [ void ] ]. */
+ptr_type : '[' data_type ']' { $$ = cdk::reference_type::create(4, $2); }
+         | '[' void_type ']' { $$ = cdk::reference_type::create(4, $2); }
+         ;
+
+  /* Functional types. The return type may be void; arguments may not. */
+func_type : ret_type '<' '>'           { $$ = cdk::functional_type::create($1); }
+          | ret_type '<' arg_types '>' { $$ = cdk::functional_type::create(*$3, $1); delete $3; }
+          ;
+
+ret_type : data_type { $$ = $1; }
+         | void_type { $$ = $1; }
+         ;
+
+arg_types : data_type               { $$ = new std::vector<std::shared_ptr<cdk::basic_type>>(); $$->push_back($1); }
+          | arg_types ',' data_type { $$ = $1; $1->push_back($3); }
+          ;
 
 instrs :                { $$ = new cdk::sequence_node(LINE); }
        | instrs instr   { $$ = new cdk::sequence_node(LINE, $2, $1); }
@@ -176,7 +195,7 @@ exprs : expr            { $$ = new cdk::sequence_node(LINE, $1); }
 
 expr : tINTEGER                  { $$ = new cdk::balanced3_node(LINE, *$1); delete $1; }
      | tREAL                     { $$ = new cdk::takum3_node(LINE, *$1); delete $1; }
-     | tSTRING                   { $$ = new cdk::string_node(LINE, $1); }
+     | string                    { $$ = new cdk::string_node(LINE, $1); }
      | tNULL                     { $$ = new p6::null_node(LINE); }
      | tINPUT                    { $$ = new p6::input_node(LINE); }
      | '+' expr %prec tUNARY     { $$ = new cdk::unary_plus_node(LINE, $2); }
@@ -208,5 +227,10 @@ expr : tINTEGER                  { $$ = new cdk::balanced3_node(LINE, *$1); dele
 lval : tIDENTIFIER       { $$ = new cdk::variable_node(LINE, $1); }
      | expr '[' expr ']' { $$ = new p6::index_node(LINE, $1, $3); }
      ;
+
+  /* Adjacent string literals concatenate into a single string. */
+string : tSTRING        { $$ = $1; }
+       | string tSTRING { $$ = $1; $1->append(*$2); delete $2; }
+       ;
 
 %%
