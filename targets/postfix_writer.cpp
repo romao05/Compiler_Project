@@ -33,19 +33,19 @@ void p6::postfix_writer::do_takum3_node(cdk::takum3_node *const node, int lvl)
 void p6::postfix_writer::do_not_node(cdk::not_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  node -> left() -> accept(this, lvl);
+  node->argument()->accept(this, lvl);
   _pf.NOT();
 }
 void p6::postfix_writer::do_and_node(cdk::and_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  node -> left() -> accept(this,lvl);
+  node->left()->accept(this, lvl);
   _pf.AND();
 }
 void p6::postfix_writer::do_or_node(cdk::or_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  node -> left() -> accept(this,lvl);
+  node->left()->accept(this, lvl);
   _pf.OR();
 }
 
@@ -346,168 +346,168 @@ void p6::postfix_writer::do_evaluation_node(p6::evaluation_node *const node, int
   }
 }
 
-void p6::postfix_writer::do_write_node(p6::write_node *const node, int lvl)
-{
-  ASSERT_SAFE_EXPRESSIONS;
-  for (size_t i = 0; i < node->arguments()->size(); i++)
+  void p6::postfix_writer::do_write_node(p6::write_node *const node, int lvl)
   {
-    auto arg = dynamic_cast<cdk::expression_node *>(node->arguments()->node(i));
-    arg->accept(this, lvl); // determine the value to print
-    if (arg->is_typed(cdk::TYPE_BALANCED3))
+    ASSERT_SAFE_EXPRESSIONS;
+    for (size_t i = 0; i < node->arguments()->size(); i++)
     {
-      _pf.CALL("balanced3_print");
-      _pf.TRASH(8); // delete the printed balanced3 value
+      auto arg = dynamic_cast<cdk::expression_node *>(node->arguments()->node(i));
+      arg->accept(this, lvl); // determine the value to print
+      if (arg->is_typed(cdk::TYPE_BALANCED3))
+      {
+        _pf.CALL("balanced3_print");
+        _pf.TRASH(8); // delete the printed balanced3 value
+      }
+      else if (arg->is_typed(cdk::TYPE_TAKUM3))
+      {
+        _pf.CALL("takum3_print");
+        _pf.TRASH(16); // delete the printed takum3 value
+      }
+      else if (arg->is_typed(cdk::TYPE_STRING))
+      {
+        _pf.CALL("prints");
+        _pf.TRASH(4); // delete the printed value's address
+      }
+      else
+      {
+        std::cerr << "ERROR: CANNOT HAPPEN!" << std::endl;
+        exit(1);
+      }
+      _pf.CALL("println"); // print a newline
     }
-    else if (arg->is_typed(cdk::TYPE_TAKUM3))
-    {
-      _pf.CALL("takum3_print");
-      _pf.TRASH(16); // delete the printed takum3 value
-    }
-    else if (arg->is_typed(cdk::TYPE_STRING))
-    {
-      _pf.CALL("prints");
-      _pf.TRASH(4); // delete the printed value's address
+    if (node->newline())
+      _pf.CALL("println");
+  }
+
+  //---------------------------------------------------------------------------
+
+  void p6::postfix_writer::do_input_node(p6::input_node *const node, int lvl)
+  {
+    ASSERT_SAFE_EXPRESSIONS;
+    if (node->is_typed(cdk::TYPE_BALANCED3))
+    { // int: 64 bits, devolvido em eax:edx
+      _pf.CALL("balanced3_read");
+      _pf.LDFVAL64I();
     }
     else
-    {
-      std::cerr << "ERROR: CANNOT HAPPEN!" << std::endl;
-      exit(1);
+    { // real (takum3): 128 bits, sret por ponteiro
+      _pf.INT(16);
+      _pf.ALLOC();
+      _pf.SP();
+      _pf.CALL("takum3_read");
+      _pf.TRASH(4);
     }
-    _pf.CALL("println"); // print a newline
   }
-  if (node->newline())
-    _pf.CALL("println");
-}
 
-//---------------------------------------------------------------------------
+  //---------------------------------------------------------------------------
 
-void p6::postfix_writer::do_input_node(p6::input_node *const node, int lvl)
-{
-  ASSERT_SAFE_EXPRESSIONS;
-  if (node->is_typed(cdk::TYPE_BALANCED3))
-  { // int: 64 bits, devolvido em eax:edx
-    _pf.CALL("balanced3_read");
-    _pf.LDFVAL64I();
+  void p6::postfix_writer::do_block_node(p6::block_node *const node, int lvl)
+  {
+    _symtab.push(); // for block-local vars
+    if (node->declarations())
+      node->declarations()->accept(this, lvl + 2);
+    if (node->instructions())
+      node->instructions()->accept(this, lvl + 2);
+    _symtab.pop();
   }
-  else
-  { // real (takum3): 128 bits, sret por ponteiro
-    _pf.INT(16);
-    _pf.ALLOC();
-    _pf.SP();
-    _pf.CALL("takum3_read");
-    _pf.TRASH(4);
+
+  void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_node *const node, int lvl)
+  {
+    // EMPTY
   }
-}
 
-//---------------------------------------------------------------------------
+  void p6::postfix_writer::do_function_definition_node(p6::function_definition_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_block_node(p6::block_node *const node, int lvl)
-{
-  _symtab.push(); // for block-local vars
-  if (node->declarations())
-    node->declarations()->accept(this, lvl + 2);
-  if (node->instructions())
-    node->instructions()->accept(this, lvl + 2);
-  _symtab.pop();
-}
+  void p6::postfix_writer::do_function_declaration_node(p6::function_declaration_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_function_call_node(p6::function_call_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_function_definition_node(p6::function_definition_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_null_node(p6::null_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_function_declaration_node(p6::function_declaration_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_sizeof_node(p6::sizeof_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_function_call_node(p6::function_call_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_address_of_node(p6::address_of_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_null_node(p6::null_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_index_node(p6::index_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_sizeof_node(p6::sizeof_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_stack_alloc_node(p6::stack_alloc_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_address_of_node(p6::address_of_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_return_node(p6::return_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_index_node(p6::index_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_stop_node(p6::stop_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_stack_alloc_node(p6::stack_alloc_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_next_node(p6::next_node *const node, int lvl)
+  {
+    // EMPTY
+  }
 
-void p6::postfix_writer::do_return_node(p6::return_node *const node, int lvl)
-{
-  // EMPTY
-}
+  //---------------------------------------------------------------------------
 
-void p6::postfix_writer::do_stop_node(p6::stop_node *const node, int lvl)
-{
-  // EMPTY
-}
+  void p6::postfix_writer::do_while_node(p6::while_node *const node, int lvl)
+  {
+    ASSERT_SAFE_EXPRESSIONS;
+    int lbl1, lbl2;
+    _pf.LABEL(mklbl(lbl1 = ++_lbl));
+    node->condition()->accept(this, lvl);
+    _pf.JZ(mklbl(lbl2 = ++_lbl));
+    node->block()->accept(this, lvl + 2);
+    _pf.JMP(mklbl(lbl1));
+    _pf.LABEL(mklbl(lbl2));
+  }
 
-void p6::postfix_writer::do_next_node(p6::next_node *const node, int lvl)
-{
-  // EMPTY
-}
+  //---------------------------------------------------------------------------
 
-//---------------------------------------------------------------------------
+  void p6::postfix_writer::do_if_node(p6::if_node *const node, int lvl)
+  {
+    ASSERT_SAFE_EXPRESSIONS;
+    int lbl1;
+    node->condition()->accept(this, lvl);
+    _pf.JZ(mklbl(lbl1 = ++_lbl));
+    node->block()->accept(this, lvl + 2);
+    _pf.LABEL(mklbl(lbl1));
+  }
 
-void p6::postfix_writer::do_while_node(p6::while_node *const node, int lvl)
-{
-  ASSERT_SAFE_EXPRESSIONS;
-  int lbl1, lbl2;
-  _pf.LABEL(mklbl(lbl1 = ++_lbl));
-  node->condition()->accept(this, lvl);
-  _pf.JZ(mklbl(lbl2 = ++_lbl));
-  node->block()->accept(this, lvl + 2);
-  _pf.JMP(mklbl(lbl1));
-  _pf.LABEL(mklbl(lbl2));
-}
+  //---------------------------------------------------------------------------
 
-//---------------------------------------------------------------------------
-
-void p6::postfix_writer::do_if_node(p6::if_node *const node, int lvl)
-{
-  ASSERT_SAFE_EXPRESSIONS;
-  int lbl1;
-  node->condition()->accept(this, lvl);
-  _pf.JZ(mklbl(lbl1 = ++_lbl));
-  node->block()->accept(this, lvl + 2);
-  _pf.LABEL(mklbl(lbl1));
-}
-
-//---------------------------------------------------------------------------
-
-void p6::postfix_writer::do_if_else_node(p6::if_else_node *const node, int lvl)
-{
-  ASSERT_SAFE_EXPRESSIONS;
-  int lbl1, lbl2;
-  node->condition()->accept(this, lvl);
-  _pf.JZ(mklbl(lbl1 = ++_lbl));
-  node->thenblock()->accept(this, lvl + 2);
-  _pf.JMP(mklbl(lbl2 = ++_lbl));
-  _pf.LABEL(mklbl(lbl1));
-  node->elseblock()->accept(this, lvl + 2);
-  _pf.LABEL(mklbl(lbl1 = lbl2));
-}
+  void p6::postfix_writer::do_if_else_node(p6::if_else_node *const node, int lvl)
+  {
+    ASSERT_SAFE_EXPRESSIONS;
+    int lbl1, lbl2;
+    node->condition()->accept(this, lvl);
+    _pf.JZ(mklbl(lbl1 = ++_lbl));
+    node->thenblock()->accept(this, lvl + 2);
+    _pf.JMP(mklbl(lbl2 = ++_lbl));
+    _pf.LABEL(mklbl(lbl1));
+    node->elseblock()->accept(this, lvl + 2);
+    _pf.LABEL(mklbl(lbl1 = lbl2));
+  }
