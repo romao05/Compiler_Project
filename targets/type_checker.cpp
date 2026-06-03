@@ -432,6 +432,7 @@ void p6::type_checker::do_variable_declaration_node(p6::variable_declaration_nod
     type = node->initializer()->type();
   if (type == nullptr)
     type = int_type();
+  node->type(type); // store inferred type back so postfix_writer can see it
   _symtab.insert(node->identifier(), std::make_shared<p6::symbol>(type, node->identifier(), 0));
 }
 

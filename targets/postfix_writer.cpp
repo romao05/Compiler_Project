@@ -436,7 +436,33 @@ void p6::postfix_writer::do_block_node(p6::block_node *const node, int lvl)
 
 void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_node *const node, int lvl)
 {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  bool isTakum3 = node->is_typed(cdk::TYPE_TAKUM3);
+  if (node->qualifier() == QUALIFIER_EXTERN || node->qualifier() == QUALIFIER_FORWARD) {
+    _pf.EXTERN(node->identifier());
+    return;
+  }
+  else if (node->qualifier() == QUALIFIER_PUBLIC) {
+    _pf.GLOBAL(node->identifier(), _pf.OBJ());
+  }
+
+  _pf.DATA();
+  _pf.ALIGN();
+  _pf.LABEL(node->identifier());
+  if (isTakum3)
+    _pf.STAKUM3(cdk::takum3_type::value_type(0));
+  else
+    _pf.SBALANCED3(cdk::balanced3_type::value_type(0));
+  _pf.TEXT();
+
+  if (node->initializer() != nullptr) {
+    node->initializer()->accept(this, lvl);
+    _pf.ADDR(node->identifier());
+    if (isTakum3)
+      _pf.STTAKUM3();
+    else
+      _pf.STBALANCED3();
+  }
 }
 
 void p6::postfix_writer::do_function_definition_node(p6::function_definition_node *const node, int lvl)
@@ -461,7 +487,8 @@ void p6::postfix_writer::do_null_node(p6::null_node *const node, int lvl)
 
 void p6::postfix_writer::do_sizeof_node(p6::sizeof_node *const node, int lvl)
 {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  _pf.INT(node->expression()->type()->size());
 }
 
 void p6::postfix_writer::do_address_of_node(p6::address_of_node *const node, int lvl)
