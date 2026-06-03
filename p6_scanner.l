@@ -35,7 +35,7 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
 }
 %}
 
-%x X_STRING X_STRING_DONE X_STRING_SKIP X_COMMENT
+%x X_STRING X_COMMENT
 %%
   yydebug=1; set_debug(1);
 
@@ -153,8 +153,8 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
      - octal escapes: \ddd (1..3 digits); value 0 truncates the
        string at that point (rest of the literal is consumed but
        discarded up to the closing quote -- C-string semantics)
-     - adjacent string literals (only whitespace between) concatenate
-       into a single tSTRING token
+     - each literal yields a single tSTRING; concatenation of adjacent
+       literals is handled by the parser (grammar), not here
      - newline and raw NUL inside the literal are lexical errors
   */
 
@@ -170,30 +170,16 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
                                   if (c < 0 || c > 255) {
                                     yyerror("escape value out of range");
                                   } else if (c == 0) {
-                                    BEGIN(X_STRING_SKIP);
                                   } else {
                                     *yylval.s += static_cast<char>(c);
                                   }
                                 }
 <X_STRING>\\.                   yyerror("invalid escape sequence in string");
 <X_STRING>\n                    yyerror("newline in string");
-<X_STRING>\"                    BEGIN(X_STRING_DONE);
+<X_STRING>\"                    BEGIN(INITIAL); return tSTRING;
 <X_STRING>.                     *yylval.s += *yytext;
 <X_STRING><<EOF>>               yyerror("unterminated string literal");
 
-<X_STRING_SKIP>\\\"             ; /* swallow escaped quote */
-<X_STRING_SKIP>\\.              ; /* swallow any other escape */
-<X_STRING_SKIP>\n               yyerror("newline in string");
-<X_STRING_SKIP>\"               BEGIN(X_STRING_DONE);
-<X_STRING_SKIP>.                ; /* discard */
-<X_STRING_SKIP><<EOF>>          yyerror("unterminated string literal");
-
-<X_STRING_DONE>[ \t\r\n]+       ; /* whitespace between adjacent literals */
-<X_STRING_DONE>"/*"             yy_push_state(X_COMMENT); /* comments are separators too */
-<X_STRING_DONE>"//".*           ; /* explanatory comment between adjacent literals */
-<X_STRING_DONE>\"               BEGIN(X_STRING);
-<X_STRING_DONE><<EOF>>          BEGIN(INITIAL); return tSTRING;
-<X_STRING_DONE>.                yyless(0); BEGIN(INITIAL); return tSTRING;
 
   /* Single-character operators / delimiters */
 [-+*/%<>=?~,;!(){}\[\]]         return *yytext;
