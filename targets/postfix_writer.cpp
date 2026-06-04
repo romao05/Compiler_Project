@@ -478,8 +478,10 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
       _pf.LOCAL(_offset);
       if (isTakum3)
         _pf.STTAKUM3();
-      else
+      else if (node->is_typed(cdk::TYPE_BALANCED3))
         _pf.STBALANCED3();
+      else
+        _pf.STINT();  // string or pointer (4 bytes)
     }
     return;
   }
@@ -495,8 +497,10 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
   _pf.LABEL(node->identifier());
   if (isTakum3)
     _pf.STAKUM3(cdk::takum3_type::value_type(0));
-  else
+  else if (node->is_typed(cdk::TYPE_BALANCED3))
     _pf.SBALANCED3(cdk::balanced3_type::value_type(0));
+  else
+    _pf.SALLOC(4);  // string or pointer (4 bytes)
   _pf.TEXT();
 
   if (node->initializer() != nullptr) {
@@ -504,8 +508,10 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
     _pf.ADDR(node->identifier());
     if (isTakum3)
       _pf.STTAKUM3();
-    else
+    else if (node->is_typed(cdk::TYPE_BALANCED3))
       _pf.STBALANCED3();
+    else
+      _pf.STINT();  // string or pointer (4 bytes)
   }
 }
 
@@ -542,10 +548,38 @@ void p6::postfix_writer::do_function_definition_node(p6::function_definition_nod
 
 void p6::postfix_writer::do_function_declaration_node(p6::function_declaration_node *const node, int lvl)
 {
+  _pf.EXTERN(node->identifier());
 }
 
 void p6::postfix_writer::do_function_call_node(p6::function_call_node *const node, int lvl)
 {
+  ASSERT_SAFE_EXPRESSIONS;
+
+  bool sret = node->is_typed(cdk::TYPE_TAKUM3);
+
+  // sret: allocate 16 bytes for result; SP() captures the address before args are pushed
+  if (sret) {
+    _pf.INT(16);
+    _pf.ALLOC();
+    _pf.SP();
+  }
+
+  // push arguments right-to-left (Cdecl)
+  int args_size = 0;
+  for (int i = (int)node->arguments()->size() - 1; i >= 0; i--) {
+    auto arg = node->argument(i);
+    arg->accept(this, lvl);
+    args_size += arg->type()->size();
+  }
+
+  _pf.CALL(node->identifier());
+  _pf.TRASH((sret ? 4 : 0) + args_size);
+
+  if (node->is_typed(cdk::TYPE_BALANCED3))
+    _pf.LDFVAL64I();
+  else if (node->is_typed(cdk::TYPE_STRING) || node->is_typed(cdk::TYPE_POINTER))
+    _pf.LDFVAL32I();
+  // takum3: result already on stack from ALLOC; void: nothing to load
 }
 
 void p6::postfix_writer::do_null_node(p6::null_node *const node, int lvl)
@@ -561,7 +595,8 @@ void p6::postfix_writer::do_sizeof_node(p6::sizeof_node *const node, int lvl)
 
 void p6::postfix_writer::do_address_of_node(p6::address_of_node *const node, int lvl)
 {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  node->lvalue()->accept(this, lvl);
 }
 
 void p6::postfix_writer::do_index_node(p6::index_node *const node, int lvl)
