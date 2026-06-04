@@ -17,12 +17,16 @@ namespace p6 {
     int _offset;
     bool _inFunctionBody;
     bool _inFunctionArgs;
+    std::shared_ptr<p6::symbol> _function; // symbol of the function being generated
+    int _funcEndLabel;                     // label of the current function epilogue
+    int _funcSretOffset;                   // frame offset of the hidden takum3-return pointer
 
   public:
     postfix_writer(std::shared_ptr<cdk::compiler> compiler, cdk::symbol_table<p6::symbol> &symtab,
                    cdk::basic_postfix_emitter &pf) :
         basic_ast_visitor(compiler), _symtab(symtab), _pf(pf), _lbl(0),
-        _offset(0), _inFunctionBody(false), _inFunctionArgs(false) {
+        _offset(0), _inFunctionBody(false), _inFunctionArgs(false),
+        _function(nullptr), _funcEndLabel(0), _funcSretOffset(0) {
     }
 
   public:
@@ -39,6 +43,16 @@ namespace p6 {
       else
         oss << "_L" << lbl;
       return oss.str();
+    }
+
+    /** Map an int 0/1 boolean (on top of the stack) into a balanced3 ternary
+        boolean: false 0 -> -1, true 1 -> +1 (i.e. 2*x - 1, then int -> balanced3). */
+    inline void boolToBalanced3() {
+      _pf.DUP32();
+      _pf.ADD();
+      _pf.INT(1);
+      _pf.SUB();
+      _pf.I2B();
     }
 
   public:

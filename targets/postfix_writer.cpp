@@ -22,9 +22,9 @@ void p6::postfix_writer::do_double_node(cdk::double_node *const node, int lvl)
 void p6::postfix_writer::do_balanced3_node(cdk::balanced3_node *const node, int lvl)
 {
   if (_inFunctionBody)
-    _pf.BALANCED3(node->value());   // stack (TEXT)
+    _pf.BALANCED3(node->value()); // stack (TEXT)
   else
-    _pf.SBALANCED3(node->value());  // DATA segment
+    _pf.SBALANCED3(node->value()); // DATA segment
 }
 void p6::postfix_writer::do_posit3_node(cdk::posit3_node *const node, int lvl)
 {
@@ -33,42 +33,46 @@ void p6::postfix_writer::do_posit3_node(cdk::posit3_node *const node, int lvl)
 void p6::postfix_writer::do_takum3_node(cdk::takum3_node *const node, int lvl)
 {
   if (_inFunctionBody)
-    _pf.TAKUM3(node->value());   // stack (TEXT)
+    _pf.TAKUM3(node->value()); // stack (TEXT)
   else
-    _pf.STAKUM3(node->value());  // DATA segment
+    _pf.STAKUM3(node->value()); // DATA segment
 }
 void p6::postfix_writer::do_not_node(cdk::not_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
   node->argument()->accept(this, lvl);
-  _pf.NOT();
+  _pf.KNOT(); // Kleene ternary negation over balanced3 (-1/0/+1)
 }
 void p6::postfix_writer::do_and_node(cdk::and_node *const node, int lvl)
 {
+  // Kleene AND = min over {-1,0,+1}, with short-circuit: the right operand is
+  // only evaluated when the left is not false (-1), since min(-1, x) == -1.
   ASSERT_SAFE_EXPRESSIONS;
-  int lbl_false = ++_lbl, lbl_end = ++_lbl;
-  node->left()->accept(this, lvl);
-  _pf.JZ(mklbl(lbl_false));               // 1º == 0 ? -> falso (curto-circuito)
-  node->right()->accept(this, lvl);
-  _pf.JZ(mklbl(lbl_false));               // 2º == 0 ? -> falso
-  _pf.BALANCED3(cdk::balanced3_type::value_type(1));  // ambos != 0 -> 1
-  _pf.JMP(mklbl(lbl_end));
-  _pf.LABEL(mklbl(lbl_false));
-  _pf.BALANCED3(cdk::balanced3_type::value_type(0));  // -> 0
+  int lbl_end = ++_lbl;
+  node->left()->accept(this, lvl); // [L] balanced3
+  _pf.DUP64();                     // [L, L]  keep a copy to be the result if we short-circuit
+  _pf.B2I();                       // [L, Li]
+  _pf.INT(-1);
+  _pf.EQ();                // [L, (Li == -1)]  is the left false?
+  _pf.JNZ(mklbl(lbl_end)); // yes -> result is L (= -1), skip the right operand
+  node->right()->accept(this, lvl); // [L, R]
+  _pf.KAND();                       // [min(L, R)]
   _pf.LABEL(mklbl(lbl_end));
 }
 void p6::postfix_writer::do_or_node(cdk::or_node *const node, int lvl)
 {
+  // Kleene OR = max over {-1,0,+1}, with short-circuit: the right operand is
+  // only evaluated when the left is not true (+1), since max(+1, x) == +1.
   ASSERT_SAFE_EXPRESSIONS;
-  int lbl_true = ++_lbl, lbl_end = ++_lbl;
-  node -> left() -> accept (this, lvl);
-  _pf.JZ(mklbl(lbl_true));
-  node -> right() -> accept (this, lvl);
-  _pf.JZ(mklbl(lbl_true));
-  _pf.BALANCED3(cdk::balanced3_type::value_type(0));
-  _pf.JMP(mklbl(lbl_end));
-  _pf.LABEL(mklbl(lbl_true));
-  _pf.BALANCED3(cdk::balanced3_type::value_type(1));
+  int lbl_end = ++_lbl;
+  node->left()->accept(this, lvl); // [L]
+  _pf.DUP64();                     // [L, L]
+  _pf.B2I();                       // [L, Li]
+  _pf.INT(1);
+  _pf.EQ();                // [L, (Li == +1)]  is the left true?
+  _pf.JNZ(mklbl(lbl_end)); // yes -> result is L (= +1), skip the right operand
+  node->right()->accept(this, lvl); // [L, R]
+  _pf.KOR();                        // [max(L, R)]
   _pf.LABEL(mklbl(lbl_end));
 }
 
@@ -87,9 +91,9 @@ void p6::postfix_writer::do_sequence_node(cdk::sequence_node *const node, int lv
 void p6::postfix_writer::do_integer_node(cdk::integer_node *const node, int lvl)
 {
   if (_inFunctionBody)
-    _pf.INT(node->value());   // stack (TEXT)
+    _pf.INT(node->value()); // stack (TEXT)
   else
-    _pf.SINT(node->value());  // DATA segment
+    _pf.SINT(node->value()); // DATA segment
 }
 
 void p6::postfix_writer::do_string_node(cdk::string_node *const node, int lvl)
@@ -101,10 +105,13 @@ void p6::postfix_writer::do_string_node(cdk::string_node *const node, int lvl)
   _pf.LABEL(mklbl(lbl1 = ++_lbl));
   _pf.SSTRING(node->value());
 
-  if (_inFunctionBody) {
+  if (_inFunctionBody)
+  {
     _pf.TEXT();
     _pf.ADDR(mklbl(lbl1)); // address onto the stack
-  } else {
+  }
+  else
+  {
     _pf.DATA();
     _pf.SADDR(mklbl(lbl1)); // address into DATA segment
   }
@@ -334,10 +341,14 @@ void p6::postfix_writer::do_program_node(p6::program_node *const node, int lvl)
   // generation aborted at the right place) by the per-node checks during the
   // actual walk below, just as it was before this pre-pass existed.
   _symtab.push();
-  try {
+  try
+  {
     p6::type_checker checker(_compiler, _symtab, this);
     node->block()->accept(&checker, 0);
-  } catch (const std::string &) { /* reported later, during code generation */ }
+  }
+  catch (const std::string &)
+  { /* reported later, during code generation */
+  }
   _symtab.pop();
   reset_new_symbol();
 
@@ -350,13 +361,17 @@ void p6::postfix_writer::do_program_node(p6::program_node *const node, int lvl)
   _pf.LABEL("_main");
   _pf.ENTER(fsc.localsize());
 
+  // main behaves like an int-returning function for the sake of "return"
+  _function = std::make_shared<p6::symbol>(cdk::primitive_type::create(8, cdk::TYPE_BALANCED3), "_main", 0);
+  _funcEndLabel = ++_lbl;
   _offset = 0;
   _inFunctionBody = true;
   node->block()->accept(this, lvl);
   _inFunctionBody = false;
 
   _pf.INT(0);
-  _pf.STFVAL32I();
+  _pf.STFVAL32I(); // default exit code 0 when control falls off the end
+  _pf.LABEL(mklbl(_funcEndLabel));
   _pf.LEAVE();
   _pf.RET();
 
@@ -384,7 +399,7 @@ void p6::postfix_writer::do_evaluation_node(p6::evaluation_node *const node, int
   {
     _pf.TRASH(8); // delete the evaluated value's address
   }
-  else if (node->argument()->is_typed(cdk::TYPE_STRING)) 
+  else if (node->argument()->is_typed(cdk::TYPE_STRING))
   {
     _pf.TRASH(4); // delete the evaluated value's address
   }
@@ -465,15 +480,18 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
   ASSERT_SAFE_EXPRESSIONS;
   bool isTakum3 = node->is_typed(cdk::TYPE_TAKUM3);
 
-  if (node->qualifier() == QUALIFIER_EXTERN || node->qualifier() == QUALIFIER_FORWARD) {
+  if (node->qualifier() == QUALIFIER_EXTERN || node->qualifier() == QUALIFIER_FORWARD)
+  {
     _pf.EXTERN(node->identifier());
     reset_new_symbol();
     return;
   }
 
-  if (_inFunctionArgs) {
+  if (_inFunctionArgs)
+  {
     auto sym = new_symbol();
-    if (sym) {
+    if (sym)
+    {
       sym->value(_offset);
       reset_new_symbol();
     }
@@ -481,14 +499,17 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
     return;
   }
 
-  if (_inFunctionBody) {
+  if (_inFunctionBody)
+  {
     _offset -= node->type()->size();
     auto sym = new_symbol();
-    if (sym) {
+    if (sym)
+    {
       sym->value(_offset);
       reset_new_symbol();
     }
-    if (node->initializer() != nullptr) {
+    if (node->initializer() != nullptr)
+    {
       node->initializer()->accept(this, lvl);
       _pf.LOCAL(_offset);
       if (isTakum3)
@@ -496,7 +517,7 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
       else if (node->is_typed(cdk::TYPE_BALANCED3))
         _pf.STBALANCED3();
       else
-        _pf.STINT();  // string or pointer (4 bytes)
+        _pf.STINT(); // string or pointer (4 bytes)
     }
     return;
   }
@@ -515,10 +536,11 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
   else if (node->is_typed(cdk::TYPE_BALANCED3))
     _pf.SBALANCED3(cdk::balanced3_type::value_type(0));
   else
-    _pf.SALLOC(4);  // string or pointer (4 bytes)
+    _pf.SALLOC(4); // string or pointer (4 bytes)
   _pf.TEXT();
 
-  if (node->initializer() != nullptr) {
+  if (node->initializer() != nullptr)
+  {
     node->initializer()->accept(this, lvl);
     _pf.ADDR(node->identifier());
     if (isTakum3)
@@ -526,12 +548,22 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
     else if (node->is_typed(cdk::TYPE_BALANCED3))
       _pf.STBALANCED3();
     else
-      _pf.STINT();  // string or pointer (4 bytes)
+      _pf.STINT(); // string or pointer (4 bytes)
   }
 }
 
 void p6::postfix_writer::do_function_definition_node(p6::function_definition_node *const node, int lvl)
 {
+
+  // remember the enclosing function context (functions may be nested)
+  auto previous_function = _function;
+  int previous_end = _funcEndLabel;
+  int previous_sret = _funcSretOffset;
+
+  _function = std::make_shared<p6::symbol>(node->type(), node->identifier(), 0);
+  _symtab.insert(node->identifier(), _function);
+  reset_new_symbol();
+
   // process argument declarations (positive offsets from FP)
   _offset = 8; // skip saved FP (4) + return address (4)
   _symtab.push();
@@ -540,13 +572,21 @@ void p6::postfix_writer::do_function_definition_node(p6::function_definition_nod
     node->arguments()->accept(this, lvl);
   _inFunctionArgs = false;
 
+  // the hidden takum3-return pointer (when present) is pushed before the
+  // arguments, so it sits just above them in the frame
+  _funcSretOffset = _offset;
+
   // type-check the body first (see do_program_node) so 'auto' locals have a
   // type before the frame size is computed; a semantic error is swallowed
   // here and reported later by the per-node checks during the walk
-  try {
+  try
+  {
     p6::type_checker checker(_compiler, _symtab, this);
     node->block()->accept(&checker, 0);
-  } catch (const std::string &) { /* reported later, during code generation */ }
+  }
+  catch (const std::string &)
+  { /* reported later, during code generation */
+  }
   reset_new_symbol();
 
   // compute local frame size before emitting ENTER
@@ -560,14 +600,21 @@ void p6::postfix_writer::do_function_definition_node(p6::function_definition_nod
   _pf.LABEL(node->identifier());
   _pf.ENTER(fsc.localsize());
 
+  _funcEndLabel = ++_lbl;
   _offset = 0;
   _inFunctionBody = true;
   node->block()->accept(this, lvl);
   _inFunctionBody = false;
 
+  _pf.LABEL(mklbl(_funcEndLabel)); // return statements jump here
   _pf.LEAVE();
   _pf.RET();
   _symtab.pop();
+
+  // restore the enclosing function context
+  _function = previous_function;
+  _funcEndLabel = previous_end;
+  _funcSretOffset = previous_sret;
 }
 
 void p6::postfix_writer::do_function_declaration_node(p6::function_declaration_node *const node, int lvl)
@@ -582,7 +629,8 @@ void p6::postfix_writer::do_function_call_node(p6::function_call_node *const nod
   bool sret = node->is_typed(cdk::TYPE_TAKUM3);
 
   // sret: allocate 16 bytes for result; SP() captures the address before args are pushed
-  if (sret) {
+  if (sret)
+  {
     _pf.INT(16);
     _pf.ALLOC();
     _pf.SP();
@@ -590,7 +638,8 @@ void p6::postfix_writer::do_function_call_node(p6::function_call_node *const nod
 
   // push arguments right-to-left (Cdecl)
   int args_size = 0;
-  for (int i = (int)node->arguments()->size() - 1; i >= 0; i--) {
+  for (int i = (int)node->arguments()->size() - 1; i >= 0; i--)
+  {
     auto arg = node->argument(i);
     arg->accept(this, lvl);
     args_size += arg->type()->size();
@@ -635,6 +684,33 @@ void p6::postfix_writer::do_stack_alloc_node(p6::stack_alloc_node *const node, i
 
 void p6::postfix_writer::do_return_node(p6::return_node *const node, int lvl)
 {
+  // a non-void function must produce its value before leaving
+  if (_function->type()->name() != cdk::TYPE_VOID && node->expression() != nullptr)
+  {
+    node->expression()->accept(this, lvl + 2);
+
+    if (_function->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.STFVAL64I(); // integer: 8 bytes
+    }
+    else if (_function->is_typed(cdk::TYPE_STRING) || _function->is_typed(cdk::TYPE_POINTER))
+    {
+      _pf.STFVAL32I(); // string/pointer: 4 bytes
+    }
+    else if (_function->is_typed(cdk::TYPE_TAKUM3))
+    {
+      // takum3 (16 bytes) is returned through the hidden pointer the caller
+      // provided: copy the value into the buffer it points to
+      _pf.LOCAL(_funcSretOffset); // address of the pointer slot in the frame
+      _pf.LDINT();                // the pointer itself (destination buffer)
+      _pf.STTAKUM3();             // *pointer = value
+    }
+    else
+    {
+      std::cerr << node->lineno() << ": should not happen: unknown return type" << std::endl;
+    }
+  }
+  _pf.JMP(mklbl(_funcEndLabel)); // single exit: jump to the function epilogue
 }
 
 void p6::postfix_writer::do_stop_node(p6::stop_node *const node, int lvl)
