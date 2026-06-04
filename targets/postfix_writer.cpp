@@ -452,6 +452,7 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
 
   if (node->qualifier() == QUALIFIER_EXTERN || node->qualifier() == QUALIFIER_FORWARD) {
     _pf.EXTERN(node->identifier());
+    reset_new_symbol();
     return;
   }
 
@@ -483,7 +484,9 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
     return;
   }
 
-  // global variable
+  // global variable: storage is allocated here, so the symbol must not leak
+  // into the next assignment (which would emit a duplicate DATA label).
+  reset_new_symbol();
   if (node->qualifier() == QUALIFIER_PUBLIC)
     _pf.GLOBAL(node->identifier(), _pf.OBJ());
 

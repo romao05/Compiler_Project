@@ -433,7 +433,9 @@ void p6::type_checker::do_variable_declaration_node(p6::variable_declaration_nod
   if (type == nullptr)
     type = int_type();
   node->type(type); // store inferred type back so postfix_writer can see it
-  _symtab.insert(node->identifier(), std::make_shared<p6::symbol>(type, node->identifier(), 0));
+  auto symbol = std::make_shared<p6::symbol>(type, node->identifier(), 0);
+  _symtab.insert(node->identifier(), symbol);
+  if (_parent) _parent->set_new_symbol(symbol); // hand the symbol to the postfix_writer so it can set the frame offset
 }
 
 void p6::type_checker::do_function_definition_node(p6::function_definition_node *const node, int lvl)
