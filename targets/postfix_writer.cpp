@@ -2,6 +2,7 @@
 #include <sstream>
 #include "targets/type_checker.h"
 #include "targets/postfix_writer.h"
+#include "targets/frame_size_calculator.h"
 #include ".auto/all_nodes.h" // all_nodes.h is automatically generated
 
 //---------------------------------------------------------------------------
@@ -20,7 +21,10 @@ void p6::postfix_writer::do_double_node(cdk::double_node *const node, int lvl)
 }
 void p6::postfix_writer::do_balanced3_node(cdk::balanced3_node *const node, int lvl)
 {
-  _pf.BALANCED3(node->value());
+  if (_inFunctionBody)
+    _pf.BALANCED3(node->value());   // stack (TEXT)
+  else
+    _pf.SBALANCED3(node->value());  // DATA segment
 }
 void p6::postfix_writer::do_posit3_node(cdk::posit3_node *const node, int lvl)
 {
@@ -28,7 +32,10 @@ void p6::postfix_writer::do_posit3_node(cdk::posit3_node *const node, int lvl)
 }
 void p6::postfix_writer::do_takum3_node(cdk::takum3_node *const node, int lvl)
 {
-  _pf.TAKUM3(node->value());
+  if (_inFunctionBody)
+    _pf.TAKUM3(node->value());   // stack (TEXT)
+  else
+    _pf.STAKUM3(node->value());  // DATA segment
 }
 void p6::postfix_writer::do_not_node(cdk::not_node *const node, int lvl)
 {
@@ -79,22 +86,28 @@ void p6::postfix_writer::do_sequence_node(cdk::sequence_node *const node, int lv
 
 void p6::postfix_writer::do_integer_node(cdk::integer_node *const node, int lvl)
 {
-  _pf.INT(node->value()); // push an integer
+  if (_inFunctionBody)
+    _pf.INT(node->value());   // stack (TEXT)
+  else
+    _pf.SINT(node->value());  // DATA segment
 }
 
 void p6::postfix_writer::do_string_node(cdk::string_node *const node, int lvl)
 {
   int lbl1;
 
-  /* generate the string */
-  _pf.RODATA();                    // strings are DATA readonly
-  _pf.ALIGN();                     // make sure we are aligned
-  _pf.LABEL(mklbl(lbl1 = ++_lbl)); // give the string a name
-  _pf.SSTRING(node->value());      // output string characters
+  _pf.RODATA();
+  _pf.ALIGN();
+  _pf.LABEL(mklbl(lbl1 = ++_lbl));
+  _pf.SSTRING(node->value());
 
-  /* leave the address on the stack */
-  _pf.TEXT();            // return to the TEXT segment
-  _pf.ADDR(mklbl(lbl1)); // the string to be printed
+  if (_inFunctionBody) {
+    _pf.TEXT();
+    _pf.ADDR(mklbl(lbl1)); // address onto the stack
+  } else {
+    _pf.DATA();
+    _pf.SADDR(mklbl(lbl1)); // address into DATA segment
+  }
 }
 
 //---------------------------------------------------------------------------
@@ -259,8 +272,11 @@ void p6::postfix_writer::do_eq_node(cdk::eq_node *const node, int lvl)
 void p6::postfix_writer::do_variable_node(cdk::variable_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  // simplified generation: all variables are global
-  _pf.ADDR(node->name());
+  auto sym = _symtab.find(node->name());
+  if (sym && sym->value() != 0)
+    _pf.LOCAL(sym->value());
+  else
+    _pf.ADDR(node->name());
 }
 
 void p6::postfix_writer::do_rvalue_node(cdk::rvalue_node *const node, int lvl)
@@ -310,34 +326,29 @@ void p6::postfix_writer::do_assignment_node(cdk::assignment_node *const node, in
 
 void p6::postfix_writer::do_program_node(p6::program_node *const node, int lvl)
 {
-  // Note that Simple doesn't have functions. Thus, it doesn't need
-  // a function node. However, it must start in the main function.
-  // The ProgramNode (representing the whole program) doubles as a
-  // main function node.
+  frame_size_calculator fsc(_compiler);
+  node->block()->accept(&fsc, lvl);
 
-  // generate the main function (RTS mandates that its name be "_main")
   _pf.TEXT();
   _pf.ALIGN();
   _pf.GLOBAL("_main", _pf.FUNC());
   _pf.LABEL("_main");
-  _pf.ENTER(0); // Simple doesn't implement local variables
+  _pf.ENTER(fsc.localsize());
 
+  _offset = 0;
+  _inFunctionBody = true;
   node->block()->accept(this, lvl);
+  _inFunctionBody = false;
 
-  // end the main function
   _pf.INT(0);
   _pf.STFVAL32I();
   _pf.LEAVE();
   _pf.RET();
 
-  // these are just a few library function imports
   _pf.EXTERN("readi");
   _pf.EXTERN("printi");
   _pf.EXTERN("prints");
   _pf.EXTERN("println");
-
-  // RTS helpers called explicitly via _pf.CALL (native opcodes like BADD
-  // auto-declare their own helpers; these manual CALLs do not, so import them)
   _pf.EXTERN("balanced3_print");
   _pf.EXTERN("balanced3_read");
   _pf.EXTERN("takum3_print");
@@ -438,13 +449,43 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
 {
   ASSERT_SAFE_EXPRESSIONS;
   bool isTakum3 = node->is_typed(cdk::TYPE_TAKUM3);
+
   if (node->qualifier() == QUALIFIER_EXTERN || node->qualifier() == QUALIFIER_FORWARD) {
     _pf.EXTERN(node->identifier());
     return;
   }
-  else if (node->qualifier() == QUALIFIER_PUBLIC) {
-    _pf.GLOBAL(node->identifier(), _pf.OBJ());
+
+  if (_inFunctionArgs) {
+    auto sym = new_symbol();
+    if (sym) {
+      sym->value(_offset);
+      reset_new_symbol();
+    }
+    _offset += node->type()->size(); // args crescem para cima (offsets positivos)
+    return;
   }
+
+  if (_inFunctionBody) {
+    _offset -= node->type()->size();
+    auto sym = new_symbol();
+    if (sym) {
+      sym->value(_offset);
+      reset_new_symbol();
+    }
+    if (node->initializer() != nullptr) {
+      node->initializer()->accept(this, lvl);
+      _pf.LOCAL(_offset);
+      if (isTakum3)
+        _pf.STTAKUM3();
+      else
+        _pf.STBALANCED3();
+    }
+    return;
+  }
+
+  // global variable
+  if (node->qualifier() == QUALIFIER_PUBLIC)
+    _pf.GLOBAL(node->identifier(), _pf.OBJ());
 
   _pf.DATA();
   _pf.ALIGN();
@@ -467,17 +508,41 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
 
 void p6::postfix_writer::do_function_definition_node(p6::function_definition_node *const node, int lvl)
 {
-  // EMPTY
+  // process argument declarations (positive offsets from FP)
+  _offset = 8; // skip saved FP (4) + return address (4)
+  _symtab.push();
+  _inFunctionArgs = true;
+  if (node->arguments())
+    node->arguments()->accept(this, lvl);
+  _inFunctionArgs = false;
+
+  // compute local frame size before emitting ENTER
+  frame_size_calculator fsc(_compiler);
+  node->block()->accept(&fsc, lvl);
+
+  _pf.TEXT();
+  _pf.ALIGN();
+  if (node->qualifier() == QUALIFIER_PUBLIC)
+    _pf.GLOBAL(node->identifier(), _pf.FUNC());
+  _pf.LABEL(node->identifier());
+  _pf.ENTER(fsc.localsize());
+
+  _offset = 0;
+  _inFunctionBody = true;
+  node->block()->accept(this, lvl);
+  _inFunctionBody = false;
+
+  _pf.LEAVE();
+  _pf.RET();
+  _symtab.pop();
 }
 
 void p6::postfix_writer::do_function_declaration_node(p6::function_declaration_node *const node, int lvl)
 {
-  // EMPTY
 }
 
 void p6::postfix_writer::do_function_call_node(p6::function_call_node *const node, int lvl)
 {
-  // EMPTY
 }
 
 void p6::postfix_writer::do_null_node(p6::null_node *const node, int lvl)
@@ -508,7 +573,6 @@ void p6::postfix_writer::do_stack_alloc_node(p6::stack_alloc_node *const node, i
 
 void p6::postfix_writer::do_return_node(p6::return_node *const node, int lvl)
 {
-  // EMPTY
 }
 
 void p6::postfix_writer::do_stop_node(p6::stop_node *const node, int lvl)
