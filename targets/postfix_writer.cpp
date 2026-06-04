@@ -326,6 +326,21 @@ void p6::postfix_writer::do_assignment_node(cdk::assignment_node *const node, in
 
 void p6::postfix_writer::do_program_node(p6::program_node *const node, int lvl)
 {
+  // Type-check the whole block first so that every declaration (notably
+  // 'auto' variables, whose type is only known after inference) already has a
+  // type before the frame_size_calculator reads node->type()->size().
+  // Without this the calculator dereferences a null type and segfaults.
+  // A semantic error here is swallowed on purpose: it is reported (and code
+  // generation aborted at the right place) by the per-node checks during the
+  // actual walk below, just as it was before this pre-pass existed.
+  _symtab.push();
+  try {
+    p6::type_checker checker(_compiler, _symtab, this);
+    node->block()->accept(&checker, 0);
+  } catch (const std::string &) { /* reported later, during code generation */ }
+  _symtab.pop();
+  reset_new_symbol();
+
   frame_size_calculator fsc(_compiler);
   node->block()->accept(&fsc, lvl);
 
@@ -524,6 +539,15 @@ void p6::postfix_writer::do_function_definition_node(p6::function_definition_nod
   if (node->arguments())
     node->arguments()->accept(this, lvl);
   _inFunctionArgs = false;
+
+  // type-check the body first (see do_program_node) so 'auto' locals have a
+  // type before the frame size is computed; a semantic error is swallowed
+  // here and reported later by the per-node checks during the walk
+  try {
+    p6::type_checker checker(_compiler, _symtab, this);
+    node->block()->accept(&checker, 0);
+  } catch (const std::string &) { /* reported later, during code generation */ }
+  reset_new_symbol();
 
   // compute local frame size before emitting ENTER
   frame_size_calculator fsc(_compiler);
