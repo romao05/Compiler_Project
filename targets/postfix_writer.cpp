@@ -151,6 +151,25 @@ void p6::postfix_writer::do_unary_plus_node(cdk::unary_plus_node *const node, in
 void p6::postfix_writer::do_add_node(cdk::add_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
+  // Pointer + integer: the result is a pointer (4-byte binary address). The
+  // integer index must be converted to 32-bit binary (B2I) and scaled by the
+  // size of the pointed-to element before being added to the address. This
+  // mirrors do_index_node's offset computation.
+  if (node->is_typed(cdk::TYPE_POINTER))
+  {
+    auto ref = cdk::reference_type::cast(node->type());
+    int elem = (ref && ref->referenced()) ? ref->referenced()->size() : 1;
+    bool leftPtr = node->left()->is_typed(cdk::TYPE_POINTER);
+    auto ptr = leftPtr ? node->left() : node->right();
+    auto idx = leftPtr ? node->right() : node->left();
+    ptr->accept(this, lvl); // base address (4 bytes)
+    idx->accept(this, lvl); // index (balanced3, 8 bytes)
+    _pf.B2I();              // -> binary 32-bit index
+    _pf.INT(elem);
+    _pf.MUL(); // index * element size (32-bit)
+    _pf.ADD(); // base + offset
+    return;
+  }
   node->left()->accept(this, lvl);
   if (node->is_typed(cdk::TYPE_TAKUM3) && node->left()->is_typed(cdk::TYPE_BALANCED3))
     _pf.B2T();
@@ -166,6 +185,36 @@ void p6::postfix_writer::do_add_node(cdk::add_node *const node, int lvl)
 void p6::postfix_writer::do_sub_node(cdk::sub_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
+  // Pointer - pointer: result is the (integer) element distance between the two
+  // addresses: (a - b) / element_size, converted back to balanced3. Checked
+  // before the pointer-integer case because the type checker types both as a
+  // pointer.
+  if (node->left()->is_typed(cdk::TYPE_POINTER) && node->right()->is_typed(cdk::TYPE_POINTER))
+  {
+    auto ref = cdk::reference_type::cast(node->left()->type());
+    int elem = (ref && ref->referenced()) ? ref->referenced()->size() : 1;
+    node->left()->accept(this, lvl);
+    node->right()->accept(this, lvl);
+    _pf.SUB(); // byte distance (32-bit)
+    _pf.INT(elem);
+    _pf.DIV(); // element distance (32-bit)
+    _pf.I2B(); // -> balanced3 (int)
+    return;
+  }
+  // Pointer - integer: result is a pointer; scale the index by the element size
+  // and subtract (32-bit binary arithmetic, like do_add_node).
+  if (node->is_typed(cdk::TYPE_POINTER))
+  {
+    auto ref = cdk::reference_type::cast(node->type());
+    int elem = (ref && ref->referenced()) ? ref->referenced()->size() : 1;
+    node->left()->accept(this, lvl);  // base address (4 bytes)
+    node->right()->accept(this, lvl); // index (balanced3, 8 bytes)
+    _pf.B2I();                        // -> binary 32-bit index
+    _pf.INT(elem);
+    _pf.MUL(); // index * element size (32-bit)
+    _pf.SUB(); // base - offset
+    return;
+  }
   node->left()->accept(this, lvl);
   if (node->is_typed(cdk::TYPE_TAKUM3) && node->left()->is_typed(cdk::TYPE_BALANCED3))
     _pf.B2T();
