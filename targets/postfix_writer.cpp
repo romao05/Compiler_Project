@@ -7,6 +7,21 @@
 #include "targets/frame_size_calculator.h"
 #include ".auto/all_nodes.h" // all_nodes.h is automatically generated
 
+// A global variable's initializer must be a compile-time literal (reference
+// manual). A literal is a numeric/string/null constant, possibly wrapped in a
+// unary +/- (the way negative number literals are written).
+static bool is_literal_expression(cdk::expression_node *e) {
+  if (e == nullptr)
+    return true;
+  if (auto u = dynamic_cast<cdk::unary_minus_node *>(e))
+    return is_literal_expression(u->argument());
+  if (auto u = dynamic_cast<cdk::unary_plus_node *>(e))
+    return is_literal_expression(u->argument());
+  return dynamic_cast<cdk::integer_node *>(e) || dynamic_cast<cdk::balanced3_node *>(e)
+      || dynamic_cast<cdk::double_node *>(e) || dynamic_cast<cdk::takum3_node *>(e)
+      || dynamic_cast<cdk::string_node *>(e) || dynamic_cast<p6::null_node *>(e);
+}
+
 //---------------------------------------------------------------------------
 
 void p6::postfix_writer::do_nil_node(cdk::nil_node *const node, int lvl)
@@ -712,6 +727,15 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
 {
   ASSERT_SAFE_EXPRESSIONS;
   bool isTakum3 = node->is_typed(cdk::TYPE_TAKUM3);
+
+  // Global scope (outside any function body or argument list): an initializer,
+  // if present, must be a compile-time literal. -- reference manual
+  if (!_inFunctionBody && !_inFunctionArgs && node->initializer() != nullptr &&
+      !is_literal_expression(node->initializer()))
+  {
+    std::cerr << node->lineno() << ": global variable initializer must be a literal" << std::endl;
+    return;
+  }
 
   if (node->qualifier() == QUALIFIER_EXTERN || node->qualifier() == QUALIFIER_FORWARD)
   {

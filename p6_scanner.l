@@ -35,7 +35,7 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
 }
 %}
 
-%x X_STRING X_COMMENT
+%x X_STRING X_STRSKIP X_COMMENT
 %%
 
   /* --- Comments --- */
@@ -170,6 +170,7 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
                                   if (c < 0 || c > 255) {
                                     yyerror("escape value out of range");
                                   } else if (c == 0) {
+                                    BEGIN(X_STRSKIP); /* \0 ends the string: discard the rest */
                                   } else {
                                     *yylval.s += static_cast<char>(c);
                                   }
@@ -179,6 +180,15 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
 <X_STRING>\"                    BEGIN(INITIAL); return tSTRING;
 <X_STRING>.                     *yylval.s += *yytext;
 <X_STRING><<EOF>>               yyerror("unterminated string literal");
+
+  /* After a \0 the string has ended: consume but discard the remaining
+     characters up to the (unescaped) closing quote (C-string semantics). */
+<X_STRSKIP>\\\"                 ; /* escaped quote: not the terminator, discard */
+<X_STRSKIP>\\.                  ; /* any other escape: discard */
+<X_STRSKIP>\n                   yyerror("newline in string");
+<X_STRSKIP>\"                   BEGIN(INITIAL); return tSTRING;
+<X_STRSKIP>.                    ; /* discard */
+<X_STRSKIP><<EOF>>              yyerror("unterminated string literal");
 
 
   /* Single-character operators / delimiters */

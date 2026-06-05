@@ -441,6 +441,11 @@ void p6::type_checker::do_program_node(p6::program_node *const node, int lvl)
 
 void p6::type_checker::do_variable_declaration_node(p6::variable_declaration_node *const node, int lvl)
 {
+  // 'forward' imports a symbol defined in another module: it can specify
+  // neither an initial value nor 'auto' (which would require one). -- manual
+  if (node->qualifier() == p6::QUALIFIER_FORWARD && node->initializer())
+    throw std::string("'forward' declaration cannot have an initializer");
+
   if (node->initializer())
   {
     node->initializer()->accept(this, lvl + 2);
@@ -452,6 +457,13 @@ void p6::type_checker::do_variable_declaration_node(p6::variable_declaration_nod
     type = node->initializer()->type();
   if (type == nullptr)
     type = int_type();
+
+  // Function (functional) types describe code addresses, not data: they may
+  // declare/forward functions, but never serve as a variable or formal
+  // argument (this method only ever handles variables/parameters). -- manual
+  if (cdk::functional_type::cast(type))
+    throw std::string("function type cannot be used for a variable or argument");
+
   node->type(type); // store inferred type back so postfix_writer can see it
   // '[N]' is typed [void]; adopt the declared pointer type so its element size
   // is known when allocating.
@@ -464,8 +476,16 @@ void p6::type_checker::do_variable_declaration_node(p6::variable_declaration_nod
 
 void p6::type_checker::do_function_definition_node(p6::function_definition_node *const node, int lvl)
 {
+  // Store a *functional* type (like 'forward'/'extern' declarations do) so that
+  // the symbol's size is that of a function value -- a code pointer, 4 bytes.
+  // This makes 'sizeof(f)' yield 4 and a bare 'f' usable as a function value.
+  std::vector<std::shared_ptr<cdk::basic_type>> argtypes;
+  if (node->arguments())
+    for (size_t i = 0; i < node->arguments()->size(); i++)
+      argtypes.push_back(node->argument(i)->type());
+  auto ftype = cdk::functional_type::create(argtypes, node->type());
   _symtab.insert(node->identifier(),
-                 std::make_shared<p6::symbol>(node->type(), node->identifier(), 0));
+                 std::make_shared<p6::symbol>(ftype, node->identifier(), 0));
   if (node->arguments())
     node->arguments()->accept(this, lvl + 2);
   node->block()->accept(this, lvl + 2);
