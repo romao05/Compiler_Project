@@ -1,5 +1,5 @@
 %option c++ prefix="p6_scanner_" outfile="p6_scanner.cpp"
-%option stack noyywrap yylineno 8bit debug
+%option stack noyywrap yylineno 8bit
 %{
 #include <stdexcept>
 #include <string>
@@ -37,7 +37,6 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
 
 %x X_STRING X_COMMENT
 %%
-  yydebug=1; set_debug(1);
 
   /* --- Comments --- */
 
