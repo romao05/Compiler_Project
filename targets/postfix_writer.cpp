@@ -960,8 +960,10 @@ void p6::postfix_writer::do_null_node(p6::null_node *const node, int lvl)
 void p6::postfix_writer::do_sizeof_node(p6::sizeof_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  // sizeof is a balanced3 (int): encode the byte size as a balanced ternary value
-  cdk::balanced3_type::value_type size(static_cast<long long>(node->expression()->type()->size()));
+  long sz = node->expression()->is_typed(cdk::TYPE_VOID)
+              ? 4L
+              : static_cast<long>(node->expression()->type()->size());
+  cdk::balanced3_type::value_type size(static_cast<long long>(sz));
   if (_inFunctionBody)
     _pf.BALANCED3(size);
   else
