@@ -225,7 +225,8 @@ void p6::postfix_writer::do_lt_node(cdk::lt_node *const node, int lvl)
       _pf.B2T();
     _pf.CALL("takum3_lt");
     _pf.TRASH(32);
-    _pf.LDFVAL32I();
+    _pf.LDFVAL64I(); // a RTS devolve o booleano P6 já como balanced3 (-1/+1)
+    return;          // não aplicar 2*x-1/I2B (conversão só para o caso inteiro)
   }
   else
   {
@@ -262,7 +263,8 @@ void p6::postfix_writer::do_le_node(cdk::le_node *const node, int lvl)
       _pf.B2T();
     _pf.CALL("takum3_le");
     _pf.TRASH(32);
-    _pf.LDFVAL32I();
+    _pf.LDFVAL64I(); // a RTS devolve o booleano P6 já como balanced3 (-1/+1)
+    return;          // não aplicar 2*x-1/I2B (conversão só para o caso inteiro)
   }
   else
   {
@@ -299,7 +301,8 @@ void p6::postfix_writer::do_ge_node(cdk::ge_node *const node, int lvl)
       _pf.B2T();
     _pf.CALL("takum3_ge");
     _pf.TRASH(32);
-    _pf.LDFVAL32I();
+    _pf.LDFVAL64I(); // a RTS devolve o booleano P6 já como balanced3 (-1/+1)
+    return;          // não aplicar 2*x-1/I2B (conversão só para o caso inteiro)
   }
   else
   {
@@ -336,7 +339,8 @@ void p6::postfix_writer::do_gt_node(cdk::gt_node *const node, int lvl)
       _pf.B2T();
     _pf.CALL("takum3_gt");
     _pf.TRASH(32);
-    _pf.LDFVAL32I();
+    _pf.LDFVAL64I(); // a RTS devolve o booleano P6 já como balanced3 (-1/+1)
+    return;          // não aplicar 2*x-1/I2B (conversão só para o caso inteiro)
   }
   else
   {
@@ -373,7 +377,8 @@ void p6::postfix_writer::do_ne_node(cdk::ne_node *const node, int lvl)
       _pf.B2T();
     _pf.CALL("takum3_ne");
     _pf.TRASH(32);
-    _pf.LDFVAL32I();
+    _pf.LDFVAL64I(); // a RTS devolve o booleano P6 já como balanced3 (-1/+1)
+    return;          // não aplicar 2*x-1/I2B (conversão só para o caso inteiro)
   }
   else
   {
@@ -413,7 +418,8 @@ void p6::postfix_writer::do_eq_node(cdk::eq_node *const node, int lvl)
       _pf.B2T();
     _pf.CALL("takum3_eq");
     _pf.TRASH(32);   // dois operandos takum3 (16 bytes cada)
-    _pf.LDFVAL32I(); // resultado inteiro (0/1) em eax
+    _pf.LDFVAL64I(); // a RTS devolve o booleano P6 já como balanced3 (-1/+1)
+    return;          // não aplicar 2*x-1/I2B (conversão só para o caso inteiro)
   }
   else
   {
