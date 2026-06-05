@@ -3,6 +3,10 @@
 #include "targets/basic_ast_visitor.h"
 
 #include <sstream>
+#include <vector>
+#include <set>
+#include <map>
+#include <string>
 #include <cdk/emitters/basic_postfix_emitter.h>
 
 namespace p6 {
@@ -20,6 +24,11 @@ namespace p6 {
     std::shared_ptr<p6::symbol> _function; // symbol of the function being generated
     int _funcEndLabel;                     // label of the current function epilogue
     int _funcSretOffset;                   // frame offset of the hidden takum3-return pointer
+    std::vector<int> _whileCond;           // stack of loop condition labels (for 'next')
+    std::vector<int> _whileEnd;            // stack of loop end labels (for 'stop')
+    std::set<std::string> _forwardFunctions; // names declared 'forward' in this module
+    std::set<std::string> _definedFunctions; // names of functions defined in this module
+    std::map<std::string, std::vector<std::shared_ptr<cdk::basic_type>>> _funcArgTypes; // formal parameter types per function (for implicit arg conversions)
 
   public:
     postfix_writer(std::shared_ptr<cdk::compiler> compiler, cdk::symbol_table<p6::symbol> &symtab,

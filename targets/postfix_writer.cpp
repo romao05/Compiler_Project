@@ -1,5 +1,7 @@
 #include <string>
 #include <sstream>
+#include <cdk/types/reference_type.h>
+#include <cdk/types/functional_type.h>
 #include "targets/type_checker.h"
 #include "targets/postfix_writer.h"
 #include "targets/frame_size_calculator.h"
@@ -40,39 +42,48 @@ void p6::postfix_writer::do_takum3_node(cdk::takum3_node *const node, int lvl)
 void p6::postfix_writer::do_not_node(cdk::not_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
+  // Lógica de Kleene: negação = -sinal(x)  (T/+ -> F/-1, U/0 -> U/0, F/- -> T/+1)
   node->argument()->accept(this, lvl);
-  _pf.KNOT(); // Kleene ternary negation over balanced3 (-1/0/+1)
+  _pf.KNOT();
 }
 void p6::postfix_writer::do_and_node(cdk::and_node *const node, int lvl)
 {
-  // Kleene AND = min over {-1,0,+1}, with short-circuit: the right operand is
-  // only evaluated when the left is not false (-1), since min(-1, x) == -1.
   ASSERT_SAFE_EXPRESSIONS;
-  int lbl_end = ++_lbl;
-  node->left()->accept(this, lvl); // [L] balanced3
-  _pf.DUP64();                     // [L, L]  keep a copy to be the result if we short-circuit
-  _pf.B2I();                       // [L, Li]
-  _pf.INT(-1);
-  _pf.EQ();                // [L, (Li == -1)]  is the left false?
-  _pf.JNZ(mklbl(lbl_end)); // yes -> result is L (= -1), skip the right operand
+  // Kleene "e" = min(sinal(esq), sinal(dir)).
+  // Curto-circuito: o 2º só é avaliado se o 1º NÃO for falso (negativo).
+  int lbl_false = ++_lbl, lbl_end = ++_lbl;
+  node->left()->accept(this, lvl);  // [L]          (balanced3, 8 bytes)
+  _pf.DUP64();                      // [L, L]       (preserva L para o KAND)
+  _pf.B2I();                        // [L, iL]      iL = valor inteiro de L (4 bytes)
+  _pf.INT(0);                       // [L, iL, 0]   (inteiro de 4 bytes)
+  _pf.LT();                         // [L, c]       c = (iL < 0) ? 1 : 0
+  _pf.JNZ(mklbl(lbl_false));        // esq falso -> curto-circuito (pop 4 bytes)
   node->right()->accept(this, lvl); // [L, R]
-  _pf.KAND();                       // [min(L, R)]
+  _pf.KAND();                       // [min(sinal L, sinal R)]
+  _pf.JMP(mklbl(lbl_end));
+  _pf.LABEL(mklbl(lbl_false));
+  _pf.TRASH(8);                                       // descarta o L preservado
+  _pf.BALANCED3(cdk::balanced3_type::value_type(-1)); // resultado -> FALSO
   _pf.LABEL(mklbl(lbl_end));
 }
 void p6::postfix_writer::do_or_node(cdk::or_node *const node, int lvl)
 {
-  // Kleene OR = max over {-1,0,+1}, with short-circuit: the right operand is
-  // only evaluated when the left is not true (+1), since max(+1, x) == +1.
   ASSERT_SAFE_EXPRESSIONS;
-  int lbl_end = ++_lbl;
-  node->left()->accept(this, lvl); // [L]
-  _pf.DUP64();                     // [L, L]
-  _pf.B2I();                       // [L, Li]
-  _pf.INT(1);
-  _pf.EQ();                // [L, (Li == +1)]  is the left true?
-  _pf.JNZ(mklbl(lbl_end)); // yes -> result is L (= +1), skip the right operand
+  // Kleene "ou" = max(sinal(esq), sinal(dir)).
+  // Curto-circuito: o 2º só é avaliado se o 1º NÃO for verdadeiro (positivo).
+  int lbl_true = ++_lbl, lbl_end = ++_lbl;
+  node->left()->accept(this, lvl);  // [L]          (balanced3, 8 bytes)
+  _pf.DUP64();                      // [L, L]       (preserva L para o KOR)
+  _pf.B2I();                        // [L, iL]      iL = valor inteiro de L (4 bytes)
+  _pf.INT(0);                       // [L, iL, 0]   (inteiro de 4 bytes)
+  _pf.GT();                         // [L, c]       c = (iL > 0) ? 1 : 0
+  _pf.JNZ(mklbl(lbl_true));         // esq verdadeiro -> curto-circuito (pop 4 bytes)
   node->right()->accept(this, lvl); // [L, R]
-  _pf.KOR();                        // [max(L, R)]
+  _pf.KOR();                        // [max(sinal L, sinal R)]
+  _pf.JMP(mklbl(lbl_end));
+  _pf.LABEL(mklbl(lbl_true));
+  _pf.TRASH(8);                                      // descarta o L preservado
+  _pf.BALANCED3(cdk::balanced3_type::value_type(1)); // resultado -> VERDADEIRO
   _pf.LABEL(mklbl(lbl_end));
 }
 
@@ -204,74 +215,227 @@ void p6::postfix_writer::do_mod_node(cdk::mod_node *const node, int lvl)
 void p6::postfix_writer::do_lt_node(cdk::lt_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  bool isTakum3 = node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3);
-  node->left()->accept(this, lvl);
-  if (isTakum3 && node->left()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  node->right()->accept(this, lvl);
-  if (isTakum3 && node->right()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  _pf.LT();
+  if (node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3))
+  {
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    _pf.CALL("takum3_lt");
+    _pf.TRASH(32);
+    _pf.LDFVAL32I();
+  }
+  else
+  {
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    _pf.LT();
+  }
+  // P6 booleano (ternário): falso = -1, verdadeiro = +1.
+  // Converte o 0/1 do ALU inteiro em -1/+1 com 2*x-1.
+  _pf.INT(2);
+  _pf.MUL();
+  _pf.INT(1);
+  _pf.SUB();
+  _pf.I2B(); // -1/+1 (4 bytes) -> balanced3 (8 bytes), conforme o tipo estático
 }
 void p6::postfix_writer::do_le_node(cdk::le_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  bool isTakum3 = node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3);
-  node->left()->accept(this, lvl);
-  if (isTakum3 && node->left()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  node->right()->accept(this, lvl);
-  if (isTakum3 && node->right()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  _pf.LE();
+  if (node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3))
+  {
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    _pf.CALL("takum3_le");
+    _pf.TRASH(32);
+    _pf.LDFVAL32I();
+  }
+  else
+  {
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    _pf.LE();
+  }
+  // P6 booleano (ternário): falso = -1, verdadeiro = +1.
+  // Converte o 0/1 do ALU inteiro em -1/+1 com 2*x-1.
+  _pf.INT(2);
+  _pf.MUL();
+  _pf.INT(1);
+  _pf.SUB();
+  _pf.I2B(); // -1/+1 (4 bytes) -> balanced3 (8 bytes), conforme o tipo estático
 }
 void p6::postfix_writer::do_ge_node(cdk::ge_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  bool isTakum3 = node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3);
-  node->left()->accept(this, lvl);
-  if (isTakum3 && node->left()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  node->right()->accept(this, lvl);
-  if (isTakum3 && node->right()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  _pf.GE();
+  if (node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3))
+  {
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    _pf.CALL("takum3_ge");
+    _pf.TRASH(32);
+    _pf.LDFVAL32I();
+  }
+  else
+  {
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    _pf.GE();
+  }
+  // P6 booleano (ternário): falso = -1, verdadeiro = +1.
+  // Converte o 0/1 do ALU inteiro em -1/+1 com 2*x-1.
+  _pf.INT(2);
+  _pf.MUL();
+  _pf.INT(1);
+  _pf.SUB();
+  _pf.I2B(); // -1/+1 (4 bytes) -> balanced3 (8 bytes), conforme o tipo estático
 }
 void p6::postfix_writer::do_gt_node(cdk::gt_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  bool isTakum3 = node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3);
-  node->left()->accept(this, lvl);
-  if (isTakum3 && node->left()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  node->right()->accept(this, lvl);
-  if (isTakum3 && node->right()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  _pf.GT();
+  if (node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3))
+  {
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    _pf.CALL("takum3_gt");
+    _pf.TRASH(32);
+    _pf.LDFVAL32I();
+  }
+  else
+  {
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    _pf.GT();
+  }
+  // P6 booleano (ternário): falso = -1, verdadeiro = +1.
+  // Converte o 0/1 do ALU inteiro em -1/+1 com 2*x-1.
+  _pf.INT(2);
+  _pf.MUL();
+  _pf.INT(1);
+  _pf.SUB();
+  _pf.I2B(); // -1/+1 (4 bytes) -> balanced3 (8 bytes), conforme o tipo estático
 }
 void p6::postfix_writer::do_ne_node(cdk::ne_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  bool isTakum3 = node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3);
-  node->left()->accept(this, lvl);
-  if (isTakum3 && node->left()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  node->right()->accept(this, lvl);
-  if (isTakum3 && node->right()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  _pf.NE();
+  if (node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3))
+  {
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    _pf.CALL("takum3_ne");
+    _pf.TRASH(32);
+    _pf.LDFVAL32I();
+  }
+  else
+  {
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    _pf.NE();
+  }
+  // P6 booleano (ternário): falso = -1, verdadeiro = +1.
+  // Converte o 0/1 do ALU inteiro em -1/+1 com 2*x-1.
+  _pf.INT(2);
+  _pf.MUL();
+  _pf.INT(1);
+  _pf.SUB();
+  _pf.I2B(); // -1/+1 (4 bytes) -> balanced3 (8 bytes), conforme o tipo estático
 }
 void p6::postfix_writer::do_eq_node(cdk::eq_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  bool isTakum3 = node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3);
-  node->left()->accept(this, lvl);
-  if (isTakum3 && node->left()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  node->right()->accept(this, lvl);
-  if (isTakum3 && node->right()->is_typed(cdk::TYPE_BALANCED3))
-    _pf.B2T();
-  _pf.EQ();
+  if (node->left()->is_typed(cdk::TYPE_TAKUM3) || node->right()->is_typed(cdk::TYPE_TAKUM3))
+  {
+    // comparação de reais: feita pela RTS em precisão ternária completa.
+    // Cdecl quer arg0 (esq) no topo, logo a dir é empilhada primeiro; operando
+    // inteiro é promovido a real com B2T.
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
+    _pf.CALL("takum3_eq");
+    _pf.TRASH(32);   // dois operandos takum3 (16 bytes cada)
+    _pf.LDFVAL32I(); // resultado inteiro (0/1) em eax
+  }
+  else
+  {
+    node->left()->accept(this, lvl);
+    if (node->left()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    node->right()->accept(this, lvl);
+    if (node->right()->is_typed(cdk::TYPE_BALANCED3))
+    {
+      _pf.B2I();
+    }
+    _pf.EQ();
+  }
+  // P6 booleano (ternário): falso = -1, verdadeiro = +1.
+  // Converte o 0/1 do ALU inteiro em -1/+1 com 2*x-1.
+  _pf.INT(2);
+  _pf.MUL();
+  _pf.INT(1);
+  _pf.SUB();
+  _pf.I2B(); // -1/+1 (4 bytes) -> balanced3 (8 bytes), conforme o tipo estático
 }
 
 //---------------------------------------------------------------------------
@@ -291,20 +455,28 @@ void p6::postfix_writer::do_rvalue_node(cdk::rvalue_node *const node, int lvl)
   ASSERT_SAFE_EXPRESSIONS;
   node->lvalue()->accept(this, lvl);
   if (node->is_typed(cdk::TYPE_TAKUM3))
-    _pf.LDTAKUM3();
+    _pf.LDTAKUM3(); // real: 16 bytes
+  else if (node->is_typed(cdk::TYPE_BALANCED3))
+    _pf.LDBALANCED3(); // int: 8 bytes
   else
-    _pf.LDBALANCED3();
+    _pf.LDINT(); // string or pointer: 4 bytes
 }
 
 void p6::postfix_writer::do_assignment_node(cdk::assignment_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
   bool isTakum3 = node->is_typed(cdk::TYPE_TAKUM3);
+  bool isBalanced3 = node->is_typed(cdk::TYPE_BALANCED3);
   node->rvalue()->accept(this, lvl);
+  // implicit int -> real conversion (e.g. `r = 1;` with real r)
+  if (isTakum3 && node->rvalue()->is_typed(cdk::TYPE_BALANCED3))
+    _pf.B2T();
   if (isTakum3)
-    _pf.DUP128(); // 128 para 16 bytes
+    _pf.DUP128(); // real: 16 bytes
+  else if (isBalanced3)
+    _pf.DUP64(); // int: 8 bytes
   else
-    _pf.DUP64(); // 64 para 8 bytes
+    _pf.DUP32(); // string or pointer: 4 bytes
 
   if (new_symbol() == nullptr)
   {
@@ -318,15 +490,19 @@ void p6::postfix_writer::do_assignment_node(cdk::assignment_node *const node, in
     reset_new_symbol();
     if (isTakum3)
       _pf.STAKUM3(cdk::takum3_type::value_type(0));
-    else
+    else if (isBalanced3)
       _pf.SBALANCED3(cdk::balanced3_type::value_type(0)); // initialize it to 0 (zero)
-    _pf.TEXT();                                           // return to the TEXT segment
-    node->lvalue()->accept(this, lvl);                    // DAVID: bah!
+    else
+      _pf.SALLOC(4);   // string or pointer (4 bytes)
+    _pf.TEXT();                        // return to the TEXT segment
+    node->lvalue()->accept(this, lvl); // DAVID: bah!
   }
   if (isTakum3)
     _pf.STTAKUM3();
-  else
+  else if (isBalanced3)
     _pf.STBALANCED3();
+  else
+    _pf.STINT(); // string or pointer: 4 bytes
 }
 
 //---------------------------------------------------------------------------
@@ -369,11 +545,21 @@ void p6::postfix_writer::do_program_node(p6::program_node *const node, int lvl)
   node->block()->accept(this, lvl);
   _inFunctionBody = false;
 
-  _pf.INT(0);
-  _pf.STFVAL32I(); // default exit code 0 when control falls off the end
+  // A p6 program always exits 0 on success. The user's "return 0" stores the
+  // *balanced3 encoding* of 0 into eax (which is non-zero), so the OS would see
+  // a bogus exit code. Force a native 0 here, after the end label, so it runs
+  // both on fall-through and on the "return" path.
   _pf.LABEL(mklbl(_funcEndLabel));
+  _pf.INT(0);
+  _pf.STFVAL32I(); // native 0 -> exit code 0
   _pf.LEAVE();
   _pf.RET();
+
+  // 'forward'-declared functions that are never defined in this module are
+  // genuinely external: emit their 'extern' now (those defined locally are not).
+  for (const auto &name : _forwardFunctions)
+    if (_definedFunctions.find(name) == _definedFunctions.end())
+      _pf.EXTERN(name);
 
   _pf.EXTERN("readi");
   _pf.EXTERN("printi");
@@ -383,6 +569,12 @@ void p6::postfix_writer::do_program_node(p6::program_node *const node, int lvl)
   _pf.EXTERN("balanced3_read");
   _pf.EXTERN("takum3_print");
   _pf.EXTERN("takum3_read");
+  _pf.EXTERN("takum3_eq");
+  _pf.EXTERN("takum3_ne");
+  _pf.EXTERN("takum3_lt");
+  _pf.EXTERN("takum3_le");
+  _pf.EXTERN("takum3_gt");
+  _pf.EXTERN("takum3_ge");
 }
 
 //---------------------------------------------------------------------------
@@ -391,23 +583,10 @@ void p6::postfix_writer::do_evaluation_node(p6::evaluation_node *const node, int
 {
   ASSERT_SAFE_EXPRESSIONS;
   node->argument()->accept(this, lvl); // determine the value
-  if (node->argument()->is_typed(cdk::TYPE_TAKUM3))
-  {
-    _pf.TRASH(16); // delete the evaluated value
-  }
-  else if (node->argument()->is_typed(cdk::TYPE_BALANCED3))
-  {
-    _pf.TRASH(8); // delete the evaluated value's address
-  }
-  else if (node->argument()->is_typed(cdk::TYPE_STRING))
-  {
-    _pf.TRASH(4); // delete the evaluated value's address
-  }
-  else
-  {
-    std::cerr << "ERROR: CANNOT HAPPEN!" << std::endl;
-    exit(1);
-  }
+  // A void expression (e.g. a call to a void function used as a statement)
+  // leaves nothing on the stack; everything else must have its result discarded.
+  if (!node->argument()->is_typed(cdk::TYPE_VOID))
+    _pf.TRASH(node->argument()->type()->size());
 }
 
 void p6::postfix_writer::do_write_node(p6::write_node *const node, int lvl)
@@ -437,7 +616,6 @@ void p6::postfix_writer::do_write_node(p6::write_node *const node, int lvl)
       std::cerr << "ERROR: CANNOT HAPPEN!" << std::endl;
       exit(1);
     }
-    _pf.CALL("println"); // print a newline
   }
   if (node->newline())
     _pf.CALL("println");
@@ -489,12 +667,19 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
 
   if (_inFunctionArgs)
   {
+    // The arguments are walked here BEFORE the body pre-pass type-checker runs,
+    // so new_symbol() has not been set for them. Create and insert the symbol
+    // ourselves so the parameter is visible (with its frame offset) both to the
+    // body type-check and to code generation. Without this, references to the
+    // parameter throw "undeclared" and abort the whole compilation.
     auto sym = new_symbol();
-    if (sym)
+    if (!sym)
     {
-      sym->value(_offset);
-      reset_new_symbol();
+      sym = std::make_shared<p6::symbol>(node->type(), node->identifier(), 0);
+      _symtab.insert(node->identifier(), sym);
     }
+    sym->value(_offset);
+    reset_new_symbol();
     _offset += node->type()->size(); // args crescem para cima (offsets positivos)
     return;
   }
@@ -511,6 +696,9 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
     if (node->initializer() != nullptr)
     {
       node->initializer()->accept(this, lvl);
+      // implicit int -> real conversion (e.g. `real r = 1;`)
+      if (isTakum3 && node->initializer()->is_typed(cdk::TYPE_BALANCED3))
+        _pf.B2T();
       _pf.LOCAL(_offset);
       if (isTakum3)
         _pf.STTAKUM3();
@@ -531,25 +719,21 @@ void p6::postfix_writer::do_variable_declaration_node(p6::variable_declaration_n
   _pf.DATA();
   _pf.ALIGN();
   _pf.LABEL(node->identifier());
-  if (isTakum3)
+  if (node->initializer() != nullptr)
+  {
+    // global initializers are compile-time constants: emit the literal value
+    // STRAIGHT into the DATA segment. Because _inFunctionBody is false here,
+    // the literal nodes (balanced3/takum3/string) call their S* variants and
+    // write the constant directly under this label -- no runtime store needed.
+    node->initializer()->accept(this, lvl);
+  }
+  else if (isTakum3)
     _pf.STAKUM3(cdk::takum3_type::value_type(0));
   else if (node->is_typed(cdk::TYPE_BALANCED3))
     _pf.SBALANCED3(cdk::balanced3_type::value_type(0));
   else
     _pf.SALLOC(4); // string or pointer (4 bytes)
   _pf.TEXT();
-
-  if (node->initializer() != nullptr)
-  {
-    node->initializer()->accept(this, lvl);
-    _pf.ADDR(node->identifier());
-    if (isTakum3)
-      _pf.STTAKUM3();
-    else if (node->is_typed(cdk::TYPE_BALANCED3))
-      _pf.STBALANCED3();
-    else
-      _pf.STINT(); // string or pointer (4 bytes)
-  }
 }
 
 void p6::postfix_writer::do_function_definition_node(p6::function_definition_node *const node, int lvl)
@@ -562,7 +746,18 @@ void p6::postfix_writer::do_function_definition_node(p6::function_definition_nod
 
   _function = std::make_shared<p6::symbol>(node->type(), node->identifier(), 0);
   _symtab.insert(node->identifier(), _function);
+  _definedFunctions.insert(node->identifier()); // defined here: no 'extern' needed
   reset_new_symbol();
+
+  // record the formal parameter types so calls can apply implicit int->real
+  // conversions to actual arguments (see do_function_call_node)
+  {
+    std::vector<std::shared_ptr<cdk::basic_type>> argtypes;
+    if (node->arguments())
+      for (size_t i = 0; i < node->arguments()->size(); i++)
+        argtypes.push_back(node->argument(i)->type());
+    _funcArgTypes[node->identifier()] = argtypes;
+  }
 
   // process argument declarations (positive offsets from FP)
   _offset = 8; // skip saved FP (4) + return address (4)
@@ -619,7 +814,37 @@ void p6::postfix_writer::do_function_definition_node(p6::function_definition_nod
 
 void p6::postfix_writer::do_function_declaration_node(p6::function_declaration_node *const node, int lvl)
 {
-  _pf.EXTERN(node->identifier());
+  // Register the symbol so calls to this function elsewhere in the module are
+  // type-checked correctly (its type is functional; the return type is read off
+  // it in do_function_call_node).
+  if (_symtab.find(node->identifier()) == nullptr)
+    _symtab.insert(node->identifier(),
+                   std::make_shared<p6::symbol>(node->type(), node->identifier(), 0));
+
+  // record the formal parameter types (from the functional type) so calls can
+  // apply implicit int->real conversions to actual arguments
+  {
+    std::vector<std::shared_ptr<cdk::basic_type>> argtypes;
+    auto ft = cdk::functional_type::cast(node->type());
+    if (ft)
+      for (size_t i = 0; i < ft->input_length(); i++)
+        argtypes.push_back(ft->input(i));
+    _funcArgTypes[node->identifier()] = argtypes;
+  }
+
+  if (node->qualifier() == QUALIFIER_EXTERN)
+  {
+    // non-P6 (e.g. C) function: always external
+    _pf.EXTERN(node->identifier());
+  }
+  else
+  {
+    // 'forward': the function may be defined later in THIS module (mutual
+    // recursion) or in another one. Emitting 'extern' now would clash with a
+    // local definition, so defer the decision to the end of the module
+    // (see do_program_node): emit 'extern' only if it is never defined here.
+    _forwardFunctions.insert(node->identifier());
+  }
 }
 
 void p6::postfix_writer::do_function_call_node(p6::function_call_node *const node, int lvl)
@@ -637,12 +862,25 @@ void p6::postfix_writer::do_function_call_node(p6::function_call_node *const nod
   }
 
   // push arguments right-to-left (Cdecl)
+  auto itypes = _funcArgTypes.find(node->identifier());
   int args_size = 0;
   for (int i = (int)node->arguments()->size() - 1; i >= 0; i--)
   {
     auto arg = node->argument(i);
     arg->accept(this, lvl);
-    args_size += arg->type()->size();
+    // implicit int -> real conversion when the formal parameter is real
+    bool promote = itypes != _funcArgTypes.end() && (size_t)i < itypes->second.size() &&
+                   itypes->second[i] && itypes->second[i]->name() == cdk::TYPE_TAKUM3 &&
+                   arg->is_typed(cdk::TYPE_BALANCED3);
+    if (promote)
+    {
+      _pf.B2T();
+      args_size += 16; // pushed as a real (takum3)
+    }
+    else
+    {
+      args_size += arg->type()->size();
+    }
   }
 
   _pf.CALL(node->identifier());
@@ -657,13 +895,22 @@ void p6::postfix_writer::do_function_call_node(p6::function_call_node *const nod
 
 void p6::postfix_writer::do_null_node(p6::null_node *const node, int lvl)
 {
-  // EMPTY
+  // the null pointer is a 4-byte address with value 0
+  if (_inFunctionBody)
+    _pf.INT(0);
+  else
+    _pf.SINT(0);
 }
 
 void p6::postfix_writer::do_sizeof_node(p6::sizeof_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
-  _pf.INT(node->expression()->type()->size());
+  // sizeof is a balanced3 (int): encode the byte size as a balanced ternary value
+  cdk::balanced3_type::value_type size(static_cast<long long>(node->expression()->type()->size()));
+  if (_inFunctionBody)
+    _pf.BALANCED3(size);
+  else
+    _pf.SBALANCED3(size);
 }
 
 void p6::postfix_writer::do_address_of_node(p6::address_of_node *const node, int lvl)
@@ -674,12 +921,31 @@ void p6::postfix_writer::do_address_of_node(p6::address_of_node *const node, int
 
 void p6::postfix_writer::do_index_node(p6::index_node *const node, int lvl)
 {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  // Pointer indexing yields a left-value: leave the *address* of the element on
+  // the stack. Pointer arithmetic is binary 32-bit (manual), so the ternary
+  // index must be converted with B2I before scaling by the element size.
+  node->base()->accept(this, lvl);    // the pointer value (4 bytes)
+  node->index()->accept(this, lvl);   // the index (balanced3, 8 bytes)
+  _pf.B2I();                          // -> binary 32-bit index
+  _pf.INT(node->type()->size());      // size of the pointed-to element
+  _pf.MUL();                          // index * element size (32-bit)
+  _pf.ADD();                          // base + offset
 }
 
 void p6::postfix_writer::do_stack_alloc_node(p6::stack_alloc_node *const node, int lvl)
 {
-  // EMPTY
+  ASSERT_SAFE_EXPRESSIONS;
+  // Reserve space on the current frame for 'count' objects and return a pointer
+  // to it. The element size comes from the (context-inferred) referenced type.
+  auto ref = cdk::reference_type::cast(node->type());
+  int elem_size = (ref && ref->referenced()) ? ref->referenced()->size() : 1;
+  node->argument()->accept(this, lvl); // count (balanced3, 8 bytes)
+  _pf.B2I();                           // -> binary 32-bit count
+  _pf.INT(elem_size);
+  _pf.MUL();                           // total bytes (32-bit)
+  _pf.ALLOC();                         // reserve on the stack
+  _pf.SP();                            // push the pointer to the reserved area
 }
 
 void p6::postfix_writer::do_return_node(p6::return_node *const node, int lvl)
@@ -688,6 +954,9 @@ void p6::postfix_writer::do_return_node(p6::return_node *const node, int lvl)
   if (_function->type()->name() != cdk::TYPE_VOID && node->expression() != nullptr)
   {
     node->expression()->accept(this, lvl + 2);
+    // implicit int -> real conversion on the returned value
+    if (_function->is_typed(cdk::TYPE_TAKUM3) && node->expression()->is_typed(cdk::TYPE_BALANCED3))
+      _pf.B2T();
 
     if (_function->is_typed(cdk::TYPE_BALANCED3))
     {
@@ -715,12 +984,19 @@ void p6::postfix_writer::do_return_node(p6::return_node *const node, int lvl)
 
 void p6::postfix_writer::do_stop_node(p6::stop_node *const node, int lvl)
 {
-  // EMPTY
+  // 'stop' breaks out of the loop: jump to its end label.
+  // level() counts loops from the innermost (1) outwards.
+  size_t level = node->level() == 0 ? 1 : node->level();
+  if (level <= _whileEnd.size())
+    _pf.JMP(mklbl(_whileEnd[_whileEnd.size() - level]));
 }
 
 void p6::postfix_writer::do_next_node(p6::next_node *const node, int lvl)
 {
-  // EMPTY
+  // 'next' skips to the next iteration: jump back to the condition label.
+  size_t level = node->level() == 0 ? 1 : node->level();
+  if (level <= _whileCond.size())
+    _pf.JMP(mklbl(_whileCond[_whileCond.size() - level]));
 }
 
 //---------------------------------------------------------------------------
@@ -731,8 +1007,17 @@ void p6::postfix_writer::do_while_node(p6::while_node *const node, int lvl)
   int lbl1, lbl2;
   _pf.LABEL(mklbl(lbl1 = ++_lbl));
   node->condition()->accept(this, lvl);
+  // P6 (ternário): condição verdadeira só se positiva (> 0).
+  if (node->condition()->is_typed(cdk::TYPE_BALANCED3))
+    _pf.B2I();
+  _pf.INT(0);
+  _pf.GT(); // 1 se positivo (verdadeiro), 0 caso contrário
   _pf.JZ(mklbl(lbl2 = ++_lbl));
+  _whileCond.push_back(lbl1); // so 'next' jumps to the condition re-test
+  _whileEnd.push_back(lbl2);  // so 'stop' jumps past the loop
   node->block()->accept(this, lvl + 2);
+  _whileCond.pop_back();
+  _whileEnd.pop_back();
   _pf.JMP(mklbl(lbl1));
   _pf.LABEL(mklbl(lbl2));
 }
@@ -744,6 +1029,11 @@ void p6::postfix_writer::do_if_node(p6::if_node *const node, int lvl)
   ASSERT_SAFE_EXPRESSIONS;
   int lbl1;
   node->condition()->accept(this, lvl);
+  // P6 (ternário): condição verdadeira só se positiva (> 0).
+  if (node->condition()->is_typed(cdk::TYPE_BALANCED3))
+    _pf.B2I();
+  _pf.INT(0);
+  _pf.GT(); // 1 se positivo (verdadeiro), 0 caso contrário
   _pf.JZ(mklbl(lbl1 = ++_lbl));
   node->block()->accept(this, lvl + 2);
   _pf.LABEL(mklbl(lbl1));
@@ -756,6 +1046,11 @@ void p6::postfix_writer::do_if_else_node(p6::if_else_node *const node, int lvl)
   ASSERT_SAFE_EXPRESSIONS;
   int lbl1, lbl2;
   node->condition()->accept(this, lvl);
+  // P6 (ternário): condição verdadeira só se positiva (> 0).
+  if (node->condition()->is_typed(cdk::TYPE_BALANCED3))
+    _pf.B2I();
+  _pf.INT(0);
+  _pf.GT(); // 1 se positivo (verdadeiro), 0 caso contrário
   _pf.JZ(mklbl(lbl1 = ++_lbl));
   node->thenblock()->accept(this, lvl + 2);
   _pf.JMP(mklbl(lbl2 = ++_lbl));

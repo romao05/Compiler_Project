@@ -107,7 +107,8 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
    Integer literals (three bases; stored as balanced ternary).
     - base 3 balanced: "0t" followed by -, 0, +
     - base 9         : "0" followed by digits 0..8
-    - decimal        : non-zero leading digit (or the lone "0")
+    - decimal        : non-zero leading 
+    digit (or the lone "0")
    "09" (and similar) is rejected as an invalid literal.
    Values beyond the 40-trit range are a lexical error.
    --------------------------------------------------------- */

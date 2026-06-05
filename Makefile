@@ -2,10 +2,13 @@
 #             CONFIGURE THESE VARIABLES IF NEEDED
 #---------------------------------------------------------------
 
-ROOT = ${HOME}/compiladores/root
-CDK_INC_DIR = $(ROOT)/usr/include
-CDK_LIB_DIR = $(ROOT)/usr/lib
-CDK_BIN_DIR = $(ROOT)/usr/bin
+# Use ?= so the environment (e.g. CDK_*_DIR exported by docker-compose) can
+# override these without editing the Makefile. On the lab machines, where no
+# such variables are set, these fall back to the original defaults.
+ROOT ?= ${HOME}/compiladores/root
+CDK_INC_DIR ?= $(ROOT)/usr/include
+CDK_LIB_DIR ?= $(ROOT)/usr/lib
+CDK_BIN_DIR ?= $(ROOT)/usr/bin
 
 LANGUAGE=p6
 

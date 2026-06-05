@@ -29,6 +29,7 @@ docker-compose.override.yml
 
 # Relatório final (entrega)
 RELATORIO-ENTREGA-FINAL.md
+PLANO-ACAO-YASM.md
 
 # Editor/IDE
 .vscode/

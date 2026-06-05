@@ -4,6 +4,7 @@
 #include ".auto/all_nodes.h" // automatically generated
 #include <cdk/types/primitive_type.h>
 #include <cdk/types/reference_type.h>
+#include <cdk/types/functional_type.h>
 
 //---------------------------------------------------------------------------
 // P6 type checker.
@@ -274,11 +275,19 @@ void p6::type_checker::do_assignment_node(cdk::assignment_node *const node, int 
   auto l_type = node->lvalue()->type();
   if (node->rvalue()->is_typed(cdk::TYPE_UNSPEC)) // input: resolve pelo lvalue
     node->rvalue()->type(is_real(l_type) ? real_type() : int_type());
+  // A '[N]' allocation and 'null' are typed as [void]; adopt the left-hand
+  // pointer type so the element size is known for indexing/allocation.
+  if (is_pointer(l_type) && dynamic_cast<p6::stack_alloc_node *>(node->rvalue()))
+    node->rvalue()->type(l_type);
   auto r_type = node->rvalue()->type();
 
   if (is_pointer(l_type) && is_pointer(r_type))
   {
-    if (cdk::reference_type::cast(l_type)->referenced()->name() != cdk::reference_type::cast(r_type)->referenced()->name())
+    auto lref = cdk::reference_type::cast(l_type)->referenced();
+    auto rref = cdk::reference_type::cast(r_type)->referenced();
+    // [void] (from 'null' or '[N]') is compatible with every pointer type
+    if (lref->name() != cdk::TYPE_VOID && rref->name() != cdk::TYPE_VOID &&
+        lref->name() != rref->name())
       throw std::string("incompatible pointer types in assignment");
     node->type(l_type);
   }
@@ -348,7 +357,18 @@ void p6::type_checker::do_function_call_node(p6::function_call_node *const node,
   if (node->arguments())
     node->arguments()->accept(this, lvl + 2);
   auto symbol = _symtab.find(node->identifier());
-  node->type(symbol && symbol->type() ? symbol->type() : int_type());
+  if (symbol && symbol->type())
+  {
+    // A 'forward'/'extern' symbol carries a *functional* type (e.g. int<string>);
+    // the value of a call is its return type. A defined function's symbol already
+    // stores the return type directly.
+    auto ft = cdk::functional_type::cast(symbol->type());
+    node->type(ft ? ft->output(0) : symbol->type());
+  }
+  else
+  {
+    node->type(int_type());
+  }
 }
 
 //---------------------------------------------------------------------------
@@ -433,6 +453,10 @@ void p6::type_checker::do_variable_declaration_node(p6::variable_declaration_nod
   if (type == nullptr)
     type = int_type();
   node->type(type); // store inferred type back so postfix_writer can see it
+  // '[N]' is typed [void]; adopt the declared pointer type so its element size
+  // is known when allocating.
+  if (is_pointer(type) && dynamic_cast<p6::stack_alloc_node *>(node->initializer()))
+    node->initializer()->type(type);
   auto symbol = std::make_shared<p6::symbol>(type, node->identifier(), 0);
   _symtab.insert(node->identifier(), symbol);
   if (_parent) _parent->set_new_symbol(symbol); // hand the symbol to the postfix_writer so it can set the frame offset
