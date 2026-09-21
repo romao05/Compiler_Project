@@ -58,6 +58,7 @@ static cdk::basic_node *p6_declaration(int lineno, int qualifier,
 %token tTYPE_INT tTYPE_REAL tTYPE_STRING tTYPE_VOID
 %token tEXTERN tFORWARD tPUBLIC tAUTO
 %token tARROW tPRINTLN
+%token tBETWEEN
 
 %nonassoc tIFX
 %nonassoc tELIF tELSE
@@ -178,6 +179,7 @@ instr : expr ';'                            { $$ = new p6::evaluation_node(LINE,
       | tIF '(' expr ')' instr %prec tIFX   { $$ = new p6::if_node(LINE, $3, $5); }
       | tIF '(' expr ')' instr tELSE instr  { $$ = new p6::if_else_node(LINE, $3, $5, $7); }
       | tIF '(' expr ')' instr elifs        { $$ = new p6::if_else_node(LINE, $3, $5, $6); }
+      | tBETWEEN expr  expr  tIDENTIFIER  expr ';' { $$ = new p6::between_node(LINE, $2, $3, *$4, $5), delete $4;}
       | bloco                               { $$ = $1; }
       ;
 

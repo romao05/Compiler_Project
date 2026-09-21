@@ -10,16 +10,15 @@
 // A global variable's initializer must be a compile-time literal (reference
 // manual). A literal is a numeric/string/null constant, possibly wrapped in a
 // unary +/- (the way negative number literals are written).
-static bool is_literal_expression(cdk::expression_node *e) {
+static bool is_literal_expression(cdk::expression_node *e)
+{
   if (e == nullptr)
     return true;
   if (auto u = dynamic_cast<cdk::unary_minus_node *>(e))
     return is_literal_expression(u->argument());
   if (auto u = dynamic_cast<cdk::unary_plus_node *>(e))
     return is_literal_expression(u->argument());
-  return dynamic_cast<cdk::integer_node *>(e) || dynamic_cast<cdk::balanced3_node *>(e)
-      || dynamic_cast<cdk::double_node *>(e) || dynamic_cast<cdk::takum3_node *>(e)
-      || dynamic_cast<cdk::string_node *>(e) || dynamic_cast<p6::null_node *>(e);
+  return dynamic_cast<cdk::integer_node *>(e) || dynamic_cast<cdk::balanced3_node *>(e) || dynamic_cast<cdk::double_node *>(e) || dynamic_cast<cdk::takum3_node *>(e) || dynamic_cast<cdk::string_node *>(e) || dynamic_cast<p6::null_node *>(e);
 }
 
 //---------------------------------------------------------------------------
@@ -563,7 +562,7 @@ void p6::postfix_writer::do_assignment_node(cdk::assignment_node *const node, in
     else if (isBalanced3)
       _pf.SBALANCED3(cdk::balanced3_type::value_type(0)); // initialize it to 0 (zero)
     else
-      _pf.SALLOC(4);   // string or pointer (4 bytes)
+      _pf.SALLOC(4);                   // string or pointer (4 bytes)
     _pf.TEXT();                        // return to the TEXT segment
     node->lvalue()->accept(this, lvl); // DAVID: bah!
   }
@@ -985,8 +984,8 @@ void p6::postfix_writer::do_sizeof_node(p6::sizeof_node *const node, int lvl)
 {
   ASSERT_SAFE_EXPRESSIONS;
   long sz = node->expression()->is_typed(cdk::TYPE_VOID)
-              ? 4L
-              : static_cast<long>(node->expression()->type()->size());
+                ? 4L
+                : static_cast<long>(node->expression()->type()->size());
   cdk::balanced3_type::value_type size(static_cast<long long>(sz));
   if (_inFunctionBody)
     _pf.BALANCED3(size);
@@ -1006,12 +1005,12 @@ void p6::postfix_writer::do_index_node(p6::index_node *const node, int lvl)
   // Pointer indexing yields a left-value: leave the *address* of the element on
   // the stack. Pointer arithmetic is binary 32-bit (manual), so the ternary
   // index must be converted with B2I before scaling by the element size.
-  node->base()->accept(this, lvl);    // the pointer value (4 bytes)
-  node->index()->accept(this, lvl);   // the index (balanced3, 8 bytes)
-  _pf.B2I();                          // -> binary 32-bit index
-  _pf.INT(node->type()->size());      // size of the pointed-to element
-  _pf.MUL();                          // index * element size (32-bit)
-  _pf.ADD();                          // base + offset
+  node->base()->accept(this, lvl);  // the pointer value (4 bytes)
+  node->index()->accept(this, lvl); // the index (balanced3, 8 bytes)
+  _pf.B2I();                        // -> binary 32-bit index
+  _pf.INT(node->type()->size());    // size of the pointed-to element
+  _pf.MUL();                        // index * element size (32-bit)
+  _pf.ADD();                        // base + offset
 }
 
 void p6::postfix_writer::do_stack_alloc_node(p6::stack_alloc_node *const node, int lvl)
@@ -1024,9 +1023,144 @@ void p6::postfix_writer::do_stack_alloc_node(p6::stack_alloc_node *const node, i
   node->argument()->accept(this, lvl); // count (balanced3, 8 bytes)
   _pf.B2I();                           // -> binary 32-bit count
   _pf.INT(elem_size);
-  _pf.MUL();                           // total bytes (32-bit)
-  _pf.ALLOC();                         // reserve on the stack
-  _pf.SP();                            // push the pointer to the reserved area
+  _pf.MUL();   // total bytes (32-bit)
+  _pf.ALLOC(); // reserve on the stack
+  _pf.SP();    // push the pointer to the reserved area
+}
+
+void p6::postfix_writer::do_unless_iterate_node(p6::unless_iterate_node *const node, int lvl)
+{
+  ASSERT_SAFE_EXPRESSIONS;
+
+  // The element type is the type pointed to by <vector>. It decides which load
+  // instruction to use, the stride used to advance the pointer, and how many
+  // bytes the argument occupies on the stack.
+  auto base = cdk::reference_type::cast(node->vector()->type())->referenced();
+  int elem_size = base->size();
+
+  // Implicit int -> real promotion when the function's single parameter is real
+  // and the elements are integers (mirrors do_function_call_node). When this
+  // happens the argument pushed is a 16-byte real, even though the element read
+  // from memory (and the pointer stride) is still 8 bytes.
+  auto itypes = _funcArgTypes.find(node->function());
+  bool promote = itypes != _funcArgTypes.end() && itypes->second.size() == 1 &&
+                 itypes->second[0] && itypes->second[0]->name() == cdk::TYPE_TAKUM3 &&
+                 base->name() == cdk::TYPE_BALANCED3;
+  int arg_size = promote ? 16 : elem_size;
+
+  int lblTest = ++_lbl, lblCleanup = ++_lbl, lblEnd = ++_lbl;
+
+  // --- guard: "unless <condition>" suppresses the whole iteration when true ---
+  node->condition()->accept(this, lvl);
+  if (node->condition()->is_typed(cdk::TYPE_BALANCED3))
+    _pf.B2I(); // ternary int -> 32-bit binary
+  _pf.INT(0);
+  _pf.GT();               // 1 if condition > 0 (P6 "true")
+  _pf.JNZ(mklbl(lblEnd)); // condition true -> skip everything (nothing pushed yet)
+
+  // --- loop state lives on the operand stack as [ptr, count] (both 32-bit,
+  //     count on top); we advance ptr and count down by hand each iteration ---
+  node->vector()->accept(this, lvl); // base address of the first element (4 bytes)
+  node->count()->accept(this, lvl);  // number of elements (balanced3, 8 bytes)
+  _pf.B2I();                         // count -> 32-bit binary
+
+  _pf.LABEL(mklbl(lblTest));
+  _pf.DUP32(); // [ptr, count, count]
+  _pf.INT(0);
+  _pf.GT();                  // count > 0 ?
+  _pf.JZ(mklbl(lblCleanup)); // no elements left -> done
+
+  // body: apply <function> to the current element
+  _pf.SWAP32(); // [count, ptr]
+  _pf.DUP32();  // [count, ptr, ptr]  (keep one ptr for the advance)
+  if (base->name() == cdk::TYPE_TAKUM3)
+    _pf.LDTAKUM3(); // real element (16 bytes)
+  else if (base->name() == cdk::TYPE_BALANCED3)
+    _pf.LDBALANCED3(); // int element (8 bytes)
+  else
+    _pf.LDINT(); // pointer/string element (4 bytes)
+  if (promote)
+    _pf.B2T();                // int element -> real argument
+  _pf.CALL(node->function()); // void function: nothing to load back
+  _pf.TRASH(arg_size);        // pop the argument -> [count, ptr]
+
+  _pf.INT(elem_size);
+  _pf.ADD();    // ptr += element size -> [count, ptr+S]
+  _pf.SWAP32(); // [ptr+S, count]
+  _pf.INT(1);
+  _pf.SUB(); // count -= 1 -> [ptr+S, count-1]
+  _pf.JMP(mklbl(lblTest));
+
+  _pf.LABEL(mklbl(lblCleanup));
+  _pf.TRASH(8); // discard the [ptr, count] loop state
+  _pf.LABEL(mklbl(lblEnd));
+}
+
+void p6::postfix_writer::do_iterate_if_node(p6::iterate_if_node *const node, int lvl)
+{
+  ASSERT_SAFE_EXPRESSIONS;
+  auto base = cdk::reference_type::cast(node->vector()->type())->referenced();
+
+  int elem_size = base->size();
+
+  auto itypes = _funcArgTypes.find(node->function());
+
+  bool promote = itypes != _funcArgTypes.end() && itypes->second.size() == 1 &&
+                 itypes->second[0] && itypes->second[0]->name() == cdk::TYPE_TAKUM3 &&
+                 base->name() == cdk::TYPE_BALANCED3;
+
+  int arg_size = promote ? 16 : elem_size;
+
+  int lblTest = ++_lbl, lblEnd = ++_lbl, lblCleanup = ++_lbl;
+  node->condition()->accept(this, lvl);
+  // P6 (ternário): condição verdadeira só se positiva (> 0).
+  if (node->condition()->is_typed(cdk::TYPE_BALANCED3))
+    _pf.B2I();
+  _pf.INT(0);
+  _pf.GT(); // 1 se positivo (verdadeiro), 0 caso contrário
+  _pf.JZ(mklbl(lblEnd));
+
+  node->vector()->accept(this, lvl + 2);
+  node->count()->accept(this, lvl + 2);
+  _pf.B2I();
+
+  _pf.LABEL(mklbl(lblTest));
+  _pf.DUP32();
+  _pf.INT(0);
+  _pf.GT();
+  _pf.JZ(mklbl(lblCleanup));
+  _pf.SWAP32();
+  _pf.DUP32();
+  if (base->name() == cdk::TYPE_TAKUM3)
+  {
+    _pf.LDTAKUM3();
+  }
+  else if (base->name() == cdk::TYPE_BALANCED3)
+  {
+    _pf.LDBALANCED3();
+  }
+  else
+  {
+    _pf.LDINT();
+  }
+
+  if (promote)
+  {
+    _pf.B2T();
+  }
+  _pf.CALL(node->function());
+  _pf.TRASH(arg_size);
+
+  _pf.INT(elem_size);
+  _pf.ADD();
+  _pf.SWAP32();
+  _pf.INT(1);
+  _pf.SUB();
+  _pf.JMP(mklbl(lblTest));
+
+  _pf.LABEL(mklbl(lblCleanup));
+  _pf.TRASH(8);
+  _pf.LABEL(mklbl(lblEnd));
 }
 
 void p6::postfix_writer::do_return_node(p6::return_node *const node, int lvl)
@@ -1138,4 +1272,161 @@ void p6::postfix_writer::do_if_else_node(p6::if_else_node *const node, int lvl)
   _pf.LABEL(mklbl(lbl1));
   node->elseblock()->accept(this, lvl + 2);
   _pf.LABEL(mklbl(lbl1 = lbl2));
+}
+
+
+void p6::postfix_writer::do_sweep_unless_node(p6::sweep_unless_node *const node, int lvl)
+{
+  ASSERT_SAFE_EXPRESSIONS;
+
+  // Element type (the pointer's base): load instruction, stride, argument size.
+  auto base = cdk::reference_type::cast(node->vector()->type())->referenced();
+  int elem_size = base->size();
+
+  // int -> real promotion when the function's single parameter is real.
+  auto itypes = _funcArgTypes.find(node->function());
+  bool promote = itypes != _funcArgTypes.end() && itypes->second.size() == 1 &&
+                 itypes->second[0] && itypes->second[0]->name() == cdk::TYPE_TAKUM3 &&
+                 base->name() == cdk::TYPE_BALANCED3;
+  int arg_size = promote ? 16 : elem_size;
+
+  int lblTest = ++_lbl, lblCleanup = ++_lbl, lblEnd = ++_lbl;
+
+  // --- guard: "unless <condition>" suppresses everything when condition is TRUE ---
+  node->condition()->accept(this, lvl);
+  if (node->condition()->is_typed(cdk::TYPE_BALANCED3))
+    _pf.B2I();
+  _pf.INT(0);
+  _pf.GT();                 // 1 if condition > 0 (true)
+  _pf.JNZ(mklbl(lblEnd));   // true -> skip (note: JNZ, since it is 'unless')
+
+  // --- build [ptr, count] (count on top); count = high - low + 1 (inclusive) ---
+  node->low()->accept(this, lvl);      // [low]
+  _pf.B2I();
+  _pf.DUP32();                         // [low, low]
+  node->high()->accept(this, lvl);     // [low, low, high]
+  _pf.B2I();
+  _pf.SWAP32();                        // [low, high, low]
+  _pf.SUB();                           // [low, high-low]
+  _pf.INT(1);
+  _pf.ADD();                           // [low, count]
+  _pf.SWAP32();                        // [count, low]
+  node->vector()->accept(this, lvl);   // [count, low, vec]
+  _pf.SWAP32();                        // [count, vec, low]
+  _pf.INT(elem_size);
+  _pf.MUL();                           // [count, vec, low*size]
+  _pf.ADD();                           // [count, ptr]
+  _pf.SWAP32();                        // [ptr, count]
+
+  // --- loop over the count elements (count > 0 also covers low > high) ---
+  _pf.LABEL(mklbl(lblTest));
+  _pf.DUP32();                         // [ptr, count, count]
+  _pf.INT(0);
+  _pf.GT();
+  _pf.JZ(mklbl(lblCleanup));
+
+  _pf.SWAP32();                        // [count, ptr]
+  _pf.DUP32();                         // [count, ptr, ptr]
+  if (base->name() == cdk::TYPE_TAKUM3)
+    _pf.LDTAKUM3();
+  else if (base->name() == cdk::TYPE_BALANCED3)
+    _pf.LDBALANCED3();
+  else
+    _pf.LDINT();
+  if (promote)
+    _pf.B2T();
+  _pf.CALL(node->function());
+  _pf.TRASH(arg_size);                 // [count, ptr]
+
+  _pf.INT(elem_size);
+  _pf.ADD();                           // ptr += elem_size -> [count, ptr]
+  _pf.SWAP32();                        // [ptr, count]
+  _pf.INT(1);
+  _pf.SUB();                           // count -= 1 -> [ptr, count]
+  _pf.JMP(mklbl(lblTest));
+
+  _pf.LABEL(mklbl(lblCleanup));
+  _pf.TRASH(8);                        // discard [ptr, count]
+  _pf.LABEL(mklbl(lblEnd));            // guard-true path lands here (balanced)
+}
+
+
+void p6::postfix_writer::do_between_node(p6::between_node *const node, int lvl)
+{
+  ASSERT_SAFE_EXPRESSIONS;
+
+  // Element type (the pointer's base): decides the load instruction, the pointer
+  // stride, and how many bytes the argument occupies on the stack.
+  auto base = cdk::reference_type::cast(node->vector()->type())->referenced();
+  int elem_size = base->size();
+
+  // int -> real promotion when the function's single parameter is real.
+  auto itypes = _funcArgTypes.find(node->function());
+  bool promote = itypes != _funcArgTypes.end() && itypes->second.size() == 1 &&
+                 itypes->second[0] && itypes->second[0]->name() == cdk::TYPE_TAKUM3 &&
+                 base->name() == cdk::TYPE_BALANCED3;
+  int arg_size = promote ? 16 : elem_size;
+
+  int lblTest = ++_lbl, lblCleanup = ++_lbl;
+
+  // 'between' has no guard. Build the loop state [ptr, count] (count on top):
+  //   count = high - low + 1   (inclusive)
+  //   ptr   = vector + low * elem_size
+  // low / high / vector are each evaluated exactly once.
+  node->low()->accept(this, lvl);      // [low]
+  _pf.B2I();
+  _pf.DUP32();                         // [low, low]
+  node->high()->accept(this, lvl);     // [low, low, high]
+  _pf.B2I();
+  _pf.SWAP32();                        // [low, high, low]
+  _pf.SUB();                           // [low, high-low]
+  _pf.INT(1);
+  _pf.ADD();                           // [low, count]
+  _pf.SWAP32();                        // [count, low]
+  node->vector()->accept(this, lvl);   // [count, low, vec]
+  _pf.SWAP32();                        // [count, vec, low]
+  _pf.INT(elem_size);
+  _pf.MUL();                           // [count, vec, low*size]
+  _pf.ADD();                           // [count, ptr]
+  _pf.SWAP32();                        // [ptr, count]
+
+  // Loop over the count elements. The count > 0 test also covers low > high
+  // (left undefined by the manual): it simply runs zero iterations.
+  _pf.LABEL(mklbl(lblTest));
+  _pf.DUP32();                         // [ptr, count, count]
+  _pf.INT(0);
+  _pf.GT();
+  _pf.JZ(mklbl(lblCleanup));
+
+  _pf.SWAP32();                        // [count, ptr]
+  _pf.DUP32();                         // [count, ptr, ptr]
+  if (base->name() == cdk::TYPE_TAKUM3)
+    _pf.LDTAKUM3();
+  else if (base->name() == cdk::TYPE_BALANCED3)
+    _pf.LDBALANCED3();
+  else
+    _pf.LDINT();
+  if (promote)
+    _pf.B2T();
+  _pf.CALL(node->function());
+  _pf.TRASH(arg_size);                 // [count, ptr]
+
+  _pf.INT(elem_size);
+  _pf.ADD();                           // ptr += elem_size -> [count, ptr]
+  _pf.SWAP32();                        // [ptr, count]
+  _pf.INT(1);
+  _pf.SUB();                           // count -= 1 -> [ptr, count]
+  _pf.JMP(mklbl(lblTest));
+
+  _pf.LABEL(mklbl(lblCleanup));
+  _pf.TRASH(8);                        // discard the [ptr, count] loop state
+}
+
+
+
+
+
+
+
+
 }

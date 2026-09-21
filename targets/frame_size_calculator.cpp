@@ -82,3 +82,7 @@ void p6::frame_size_calculator::do_if_else_node(p6::if_else_node *const node, in
 void p6::frame_size_calculator::do_while_node(p6::while_node *const node, int lvl) {
   node->block()->accept(this, lvl);
 }
+
+// The iteration keeps its state (pointer + counter) on the operand stack and
+// declares no locals, so it contributes nothing to the frame size.
+void p6::frame_size_calculator::do_unless_iterate_node(p6::unless_iterate_node *const, int) {}

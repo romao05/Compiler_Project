@@ -78,6 +78,7 @@ static long long p6_scan_int(const char *text, int base, bool &overflow) {
 "stop"                          return tSTOP;
 "next"                          return tNEXT;
 "return"                        return tRETURN;
+"between"                       return tBETWEEN;
 
 "input"                         return tINPUT;
 "null"                          return tNULL;

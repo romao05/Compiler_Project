@@ -371,6 +371,102 @@ void p6::type_checker::do_function_call_node(p6::function_call_node *const node,
   }
 }
 
+void p6::type_checker::do_unless_iterate_node(p6::unless_iterate_node *const node, int lvl)
+{
+  node->condition()->accept(this, lvl + 2);
+  node->vector()->accept(this, lvl + 2);
+  node->count()->accept(this, lvl + 2);
+
+  // 'input' (UNSPEC) used as condition/count resolves to integer.
+  if (node->condition()->is_typed(cdk::TYPE_UNSPEC))
+    node->condition()->type(int_type());
+  if (node->count()->is_typed(cdk::TYPE_UNSPEC))
+    node->count()->type(int_type());
+
+  // <condition> must be of type int.
+  if (!node->condition()->is_typed(cdk::TYPE_BALANCED3))
+    throw std::string("condition of 'unless' must be of type int");
+
+  // <count> must be of type int.
+  if (!node->count()->is_typed(cdk::TYPE_BALANCED3))
+    throw std::string("element count of 'iterate' must be of type int");
+
+  // <vector> must be a pointer; its referenced type is the element type.
+  if (!is_pointer(node->vector()->type()))
+    throw std::string("'iterate' requires a pointer as the vector");
+  auto base = cdk::reference_type::cast(node->vector()->type())->referenced();
+
+  // <function-name> must be a declared function returning void and taking
+  // exactly one argument compatible with the pointer's base type.
+  auto symbol = _symtab.find(node->function());
+  if (symbol == nullptr)
+    throw std::string("undeclared function '" + node->function() + "' in 'using'");
+  auto ftype = cdk::functional_type::cast(symbol->type());
+  if (ftype == nullptr)
+    throw std::string("'" + node->function() + "' is not a function");
+  if (ftype->output(0)->name() != cdk::TYPE_VOID)
+    throw std::string("function '" + node->function() + "' must return void");
+  if (ftype->input_length() != 1)
+    throw std::string("function '" + node->function() + "' must take exactly one argument");
+
+  // The single argument must be compatible with the element type (allowing the
+  // language's int -> real widening, as in assignments).
+  auto arg = ftype->input(0);
+  bool compatible = arg->name() == base->name() ||
+                    (is_real(arg) && base->name() == cdk::TYPE_BALANCED3);
+  if (!compatible)
+    throw std::string("function '" + node->function() +
+                      "' argument is incompatible with the vector element type");
+}
+
+void p6::type_checker::do_iterate_if_node(p6::iterate_if_node *const node, int lvl)
+{
+  node->vector()->accept(this, lvl + 2);
+  node->count()->accept(this, lvl + 2);
+  node->condition()->accept(this, lvl + 2);
+
+  if (node->condition()->is_typed(cdk::TYPE_UNSPEC))
+  {
+    node->condition()->type(int_type());
+  }
+  else if (!node->condition()->is_typed(cdk::TYPE_BALANCED3))
+  {
+    throw std::string("condition has to be of type 'int'");
+  }
+
+  if (node->count()->is_typed(cdk::TYPE_UNSPEC))
+  {
+    node->count()->type(int_type());
+  }
+  else if (!node->count()->is_typed(cdk::TYPE_BALANCED3))
+  {
+    throw std::string("Count has to be of type 'int'");
+  }
+
+  if (!node->vector()->is_typed(cdk::TYPE_POINTER))
+  {
+    throw std::string("Vector has to be of type 'pointer' ");
+  }
+
+  auto base = cdk::reference_type::cast(node->vector()->type())->referenced();
+  auto symbol = _symtab.find(node->function());
+  if (symbol == nullptr)
+  {
+    throw std::string("Undeclared funtion");
+  }
+
+  auto ftype = cdk::functional_type::cast(symbol->type());
+
+  if (base->name() != ftype->input(0)->name())
+  {
+    throw std::string("Incompatible types between vector and function arguments");
+  }
+  if (ftype->output(0)->name() != cdk::TYPE_VOID)
+  {
+    throw std::string("Function has to return void");
+  }
+}
+
 //---------------------------------------------------------------------------
 // Instructions and structural nodes (no type of their own).
 
@@ -471,7 +567,8 @@ void p6::type_checker::do_variable_declaration_node(p6::variable_declaration_nod
     node->initializer()->type(type);
   auto symbol = std::make_shared<p6::symbol>(type, node->identifier(), 0);
   _symtab.insert(node->identifier(), symbol);
-  if (_parent) _parent->set_new_symbol(symbol); // hand the symbol to the postfix_writer so it can set the frame offset
+  if (_parent)
+    _parent->set_new_symbol(symbol); // hand the symbol to the postfix_writer so it can set the frame offset
 }
 
 void p6::type_checker::do_function_definition_node(p6::function_definition_node *const node, int lvl)
@@ -497,4 +594,107 @@ void p6::type_checker::do_function_declaration_node(p6::function_declaration_nod
                  std::make_shared<p6::symbol>(node->type(), node->identifier(), 0));
   if (node->arguments())
     node->arguments()->accept(this, lvl + 2);
+}
+
+void p6::type_checker::do_sweep_unless_node(p6::sweep_unless_node *const node, int lvl)
+{
+  node->vector()->accept(this, lvl + 2);
+  node->low()->accept(this, lvl + 2);
+  node->high()->accept(this, lvl + 2);
+  node->condition()->accept(this, lvl + 2);
+
+  if (node->vector()->is_typed(cdk::TYPE_UNSPEC))
+  {
+    node->vector()->type(pointer_type(cdk::primitive_type::create(0, cdk::TYPE_VOID)));
+  }
+  else if (!node->vector()->is_typed(cdk::TYPE_POINTER))
+  {
+    throw std::string("Vector has to be of type pointer");
+  }
+
+  if (node->low()->is_typed(cdk::TYPE_UNSPEC))
+  {
+    node->low()->type(int_type());
+  }
+  else if (!node->low()->is_typed(cdk::TYPE_BALANCED3))
+  {
+    throw std::string("Low has to be of type int");
+  }
+
+  if (node->high()->is_typed(cdk::TYPE_UNSPEC))
+  {
+    node->high()->type(int_type());
+  }
+  else if (!node->high()->is_typed(cdk::TYPE_BALANCED3))
+  {
+    throw std::string("High has to be of type int");
+  }
+
+  auto base = cdk::reference_type::cast(node->vector()->type())->referenced();
+  auto symbol = _symtab()->find(node->function());
+
+  if (symbol == nullptr)
+  {
+    throw std::string("Undecleared function");
+  }
+  auto ftype = cdk::functional_type::cast(symbol->type());
+  if (ftype == nullptr)
+  {
+    throw std::string("Function type not identified");
+  }
+  if (base->name() != ftype->input(0)->name())
+  {
+    throw std::string("Incompatible types between vector and function input");
+  }
+  if (ftype->input_length() != 1)
+  {
+    throw std::string("Funtion input has to de of lenght 1");
+  }
+  if (ftype->input(0)->name() != cdk::TYPE_VOID)
+  {
+    throw std::string("Function has to be of type void");
+  }
+
+}
+
+
+void p6::type_checker::do_between_node(p6::between_node *const node, int lvl) {
+  node -> low() -> accept (this, lvl + 2);
+  node -> high () -> accept (this, lvl + 2);
+  node -> vector() -> accept (this, lvl + 2);
+
+  if (! node -> low () -> is_typed(cdk::TYPE_BALANCED3)) {
+    throw std::string ("Low has to be of type int");
+  }
+
+  if (! node -> high() -> is_typed(cdk::TYPE_BALANCED3)) {
+    throw std::string ("High has to be of type int");
+  }
+
+  if (! node -> vector() -> is_typed(cdk::TYPE_POINTER)) {
+    throw std::string ("vector has to be of type pointer");
+  }
+
+
+  auto base = cdk::reference_type::cast(node -> vector() -> type()) -> referenced();
+  auto symbol = _symtab.find(node->function());
+
+  if (symbol == nullptr) {
+    throw std::string ("Undeclared function");
+  }
+
+  auto ft = cdk::functional_type::cast(symbol->type());
+
+  if (ft -> input_length() != 1) {
+    throw std::string ("ERROR");
+  }
+
+  if (base -> name() != ft -> input (0) -> name()) {
+    throw std::string ("Incompatible types between vector and function args");
+  }
+
+  if (!(ft -> output(0) -> name () == cdk::TYPE_VOID)) {
+    throw std::string ("Function does not return void type");
+  }
+
 }
